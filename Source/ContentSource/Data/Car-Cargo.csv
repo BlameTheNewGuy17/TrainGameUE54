@@ -1,0 +1,7 @@
+Car,Type1,Type2,Type3,Type4,Type5,Type6
+LogFlat,Logs,DebarkedLogs,NONE,NONE,NONE,NONE
+StakeFlat,Boards,Beams,Plywood,NONE,NONE,NONE
+BulkheadFlat,Cordwood,Cellophane,Bricks,NONE,NONE,NONE
+Gondola,Firewood,WoodPulp,Rayon,NONE,NONE,NONE
+GondolaTall,Firewood,WoodPulp,NONE,NONE,NONE,NONE
+Boxcar,Cellophane,Bricks,Rayon,Paper,Cardboard,Furniture
