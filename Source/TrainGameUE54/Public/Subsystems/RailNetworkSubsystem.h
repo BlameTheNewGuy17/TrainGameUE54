@@ -22,6 +22,9 @@ class TRAINGAMEUE54_API URailNetworkSubsystem : public UWorldSubsystem
 	GENERATED_BODY()
 
 public:
+	// ---------- DEBUG ----------
+	UFUNCTION(BlueprintCallable)
+	void DebugDrawRailNetwork(float Duration = 0.f, float Thickness = 2.f) const;
 
 	// ---------- CORE GRAPH ----------
 

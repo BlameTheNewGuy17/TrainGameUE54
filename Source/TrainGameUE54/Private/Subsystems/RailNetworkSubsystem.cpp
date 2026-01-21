@@ -3,6 +3,7 @@
 
 #include "Subsystems/RailNetworkSubsystem.h"
 #include "RailMath.h"
+#include "DrawDebugHelpers.h"
 
 /*
 URailNetworkSubsystem
@@ -12,6 +13,85 @@ incrementally fill in behavior starting with GetTransformAtDistance.
 */
 
 // ---------- CORE GRAPH ----------
+
+void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness) const
+{
+	UWorld* World = GetWorld();
+
+	// ---- Draw Nodes ----
+	for (const auto& Pair : Nodes)
+	{
+		const FRailNodeData & Node = Pair.Value;
+
+		DrawDebugSphere(
+			World,
+			Node.WorldPosition,
+			20.f,
+			12,
+			FColor::Yellow,
+			false,
+			Duration,
+			0, 
+			2.f);
+	}
+
+	// ---- Draw Edges (sampled Hermite curves) ----
+	const int32 NumSegments = 32; // increase for smoother curves
+
+	for (const auto& Pair : Edges)
+	{
+		const FRailEdgeData& Edge = Pair.Value;
+
+		const FRailNodeData* NA = Nodes.Find(Edge.NodeA.Value);
+		const FRailNodeData* NB = Nodes.Find(Edge.NodeB.Value);
+		if (!NA || !NB) continue;
+
+		FVector PrevPos = NA->WorldPosition;
+
+		for (int32 i = 1; i <= NumSegments; ++i)
+		{
+			const float T = (float)i / (float)NumSegments;
+
+			const FVector Pos = RailMath::EvalHermitePos(
+				NA->WorldPosition, Edge.TangentA,
+				NB->WorldPosition, Edge.TangentB,
+				T);
+
+			DrawDebugLine(
+				World,
+				PrevPos,
+				Pos,
+				FColor::Cyan,
+				false,
+				Duration,
+				0,
+				Thickness);
+
+			PrevPos = Pos;
+		}
+
+		// ---- Optional: draw tangents at endpoints ----
+		DrawDebugLine(
+			World,
+			NA->WorldPosition,
+			NA->WorldPosition + Edge.TangentA,
+			FColor::Green,
+			false,
+			Duration,
+			0,
+			2.f);
+
+		DrawDebugLine(
+			World,
+			NB->WorldPosition,
+			NB->WorldPosition + Edge.TangentB,
+			FColor::Red,
+			false,
+			Duration,
+			0,
+			2.f);
+	}
+}
 
 FRailNodeID URailNetworkSubsystem::CreateNode(const FVector& WorldPos, ERailNodeType Type)
 {
@@ -118,18 +198,31 @@ FTransform URailNetworkSubsystem::GetTransformAtDistance(FRailEdgeID Edge, float
 
 	Tangent = Tangent.GetSafeNormal();
 
-	// Build a simple rotation frame (Up = +Z for now)
-	const FVector Up = FVector::UpVector;
-	const FVector Right = FVector::CrossProduct(Up, Tangent).GetSafeNormal();
-	const FVector TrueUp = FVector::CrossProduct(Tangent, Right).GetSafeNormal();
+	// Build a stable frame (Forward = tangent, Z-up rail frame)
 
-	const FMatrix RotMat(
-		FPlane(Tangent, 0),
-		FPlane(Right, 0),
-		FPlane(TrueUp, 0),
-		FPlane(0, 0, 0, 1));
+	const FVector Forward = Tangent;
+	const FVector WorldUp = FVector::UpVector;
+
+	// If Forward is nearly vertical, choose a different up to avoid degeneracy
+	FVector Up = WorldUp;
+	if (FMath::Abs(FVector::DotProduct(Forward, WorldUp)) > 0.99f)
+	{
+		Up = FVector::RightVector;
+	}
+
+	// Build orthonormal basis
+	const FVector Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
+	const FVector TrueUp = FVector::CrossProduct(Forward, Right).GetSafeNormal();
+
+	// Use UE helper (much more stable than manual FMatrix)
+	const FMatrix RotMat = FRotationMatrix::MakeFromXZ(Forward, TrueUp);
+
+	DrawDebugPoint(GetWorld(), Pos, 10.f, FColor::Red, false, 0.f);
+	DrawDebugLine(GetWorld(), Pos, Pos + Forward * 150.f, FColor::Green, false, 0.f, 0, 2.f);
+
 
 	return FTransform(RotMat.Rotator(), Pos);
+
 }
 
 // ---------- MOVEMENT ----------
@@ -144,7 +237,7 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 	FRailTravelResult Result;
 	Result.Edge = Edge;
 	Result.Dir = Dir;
-	Result.S = S + ((Dir == ERailDirection::AtoB) ? DeltaS : -DeltaS);
+	Result.S = S + ((Dir == ERailDirection::AToB) ? DeltaS : -DeltaS);
 
 	// MVP version: no transitions yet
 	return Result;
