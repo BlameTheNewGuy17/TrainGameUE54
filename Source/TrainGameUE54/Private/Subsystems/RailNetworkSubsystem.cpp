@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "Subsystems/RailNetworkSubsystem.h"
@@ -217,12 +217,7 @@ FTransform URailNetworkSubsystem::GetTransformAtDistance(FRailEdgeID Edge, float
 	// Use UE helper (much more stable than manual FMatrix)
 	const FMatrix RotMat = FRotationMatrix::MakeFromXZ(Forward, TrueUp);
 
-	DrawDebugPoint(GetWorld(), Pos, 10.f, FColor::Red, false, 0.f);
-	DrawDebugLine(GetWorld(), Pos, Pos + Forward * 150.f, FColor::Green, false, 0.f, 0, 2.f);
-
-
 	return FTransform(RotMat.Rotator(), Pos);
-
 }
 
 // ---------- MOVEMENT ----------
@@ -237,9 +232,105 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 	FRailTravelResult Result;
 	Result.Edge = Edge;
 	Result.Dir = Dir;
-	Result.S = S + ((Dir == ERailDirection::AToB) ? DeltaS : -DeltaS);
+	Result.S = S;
 
-	// MVP version: no transitions yet
+	float Remaining = DeltaS;
+
+	while (Remaining > 0.f)
+	{
+		const FRailEdgeData* E = Edges.Find(Result.Edge.Value);
+		if (!E)
+		{
+			Result.bStopped = true;
+			Result.StopReason = ERailStopReason::InvalidGraph;
+			return Result;
+		}
+
+		const float Length = E->Length;
+
+		// Distance available before hitting an endpoint
+		float DistToEnd =
+			(Result.Dir == ERailDirection::AToB)
+			? (Length - Result.S)
+			: (Result.S);
+
+		// Case 1: we stay on this edge
+		if (Remaining < DistToEnd)
+		{
+			Result.S += (Result.Dir == ERailDirection::AToB) ? Remaining : -Remaining;
+			return Result;
+		}
+
+		// Case 2: we reach the node
+		Remaining -= DistToEnd;
+
+		// Snap exactly to the endpoint
+		Result.S = (Result.Dir == ERailDirection::AToB) ? Length : 0.f;
+
+		// Determine arrival node
+		FRailNodeID ArriveNode =
+			(Result.Dir == ERailDirection::AToB)
+			? E->NodeB
+			: E->NodeA;
+
+		Result.LastTransitionNode = ArriveNode;
+
+		// Choose next edge
+		FRailEdgeID NextEdge = SelectNextEdge(
+			ArriveNode,
+			Result.Edge,
+			Result.Dir,
+			Ctx);
+
+		// If no valid continuation → stop here
+		if (!NextEdge.IsValid())
+		{
+			Result.bStopped = true;
+			Result.StopReason = ERailStopReason::NoNextEdge;
+			return Result;
+		}
+
+		// Optional: signaling / block check
+		if (Ctx.bEnforceSignals && !CanEnterEdge(ArriveNode, NextEdge, /*TrainID*/ 0))
+		{
+			Result.bStopped = true;
+			Result.StopReason = ERailStopReason::BlockedBySignal;
+			return Result;
+		}
+
+		// Switch to the new edge
+		const FRailEdgeData* NE = Edges.Find(NextEdge.Value);
+		if (!NE)
+		{
+			Result.bStopped = true;
+			Result.StopReason = ERailStopReason::InvalidGraph;
+			return Result;
+		}
+
+		// Determine new direction on that edge
+		if (NE->NodeA.Value == ArriveNode.Value)
+		{
+			Result.Dir = ERailDirection::AToB;
+			Result.S = 0.f;
+		}
+		else if (NE->NodeB.Value == ArriveNode.Value)
+		{
+			Result.Dir = ERailDirection::BToA;
+			Result.S = NE->Length;
+		}
+		else
+		{
+			// Graph inconsistency
+			Result.bStopped = true;
+			Result.StopReason = ERailStopReason::InvalidGraph;
+			return Result;
+		}
+
+		Result.Edge = NextEdge;
+
+		// Loop continues with remaining distance
+	}
+
 	return Result;
 }
 
@@ -252,7 +343,11 @@ FRailEdgeID URailNetworkSubsystem::SelectNextEdge(
 	const FRailNodeData* Node = Nodes.Find(AtNode.Value);
 	if (!Node) return FRailEdgeID();
 
-	// Simple rule: if exactly two edges, take the other one
+	// If only one connected edge → dead end
+	if (Node->ConnectedEdges.Num() <= 1)
+		return FRailEdgeID();
+
+	// If exactly two edges → take the other one
 	if (Node->ConnectedEdges.Num() == 2)
 	{
 		return (Node->ConnectedEdges[0].Value == IncomingEdge.Value)
@@ -260,9 +355,14 @@ FRailEdgeID URailNetworkSubsystem::SelectNextEdge(
 			: Node->ConnectedEdges[0];
 	}
 
-	// Otherwise: no valid continuation (stop)
-	return FRailEdgeID();
+	// Later:
+	// - If switch: consult switch state
+	// - If AI path: follow PlannedEdges
+	// - Else: stop
+
+	return FRailEdgeID(); // stop at junction for now
 }
+
 
 // ---------- BLOCKS ----------
 
