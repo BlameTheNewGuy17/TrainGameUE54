@@ -28,7 +28,7 @@ public:
 
 	// ---------- CORE GRAPH ----------
 
-	UFUNCTION(BlueprintCallable) FRailNodeID CreateNode(const FVector& WorldPos, ERailNodeType Type);
+	UFUNCTION(BlueprintCallable) FRailNodeID CreateNode(const FVector& WorldPos, ERailNodeType Type, FRailEdgeID ActiveEdge);
 	UFUNCTION(BlueprintCallable) FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector& TangentA, const FVector& TangentB);
 
 	UFUNCTION(BlueprintCallable) bool RemoveEdge(FRailEdgeID Edge);

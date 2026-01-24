@@ -93,7 +93,7 @@ void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness
 	}
 }
 
-FRailNodeID URailNetworkSubsystem::CreateNode(const FVector& WorldPos, ERailNodeType Type)
+FRailNodeID URailNetworkSubsystem::CreateNode(const FVector& WorldPos, ERailNodeType Type, FRailEdgeID ActiveEdge)
 {
 	FRailNodeID NewID;
 	NewID.Value = NextNodeID++;
@@ -102,6 +102,7 @@ FRailNodeID URailNetworkSubsystem::CreateNode(const FVector& WorldPos, ERailNode
 	Data.ID = NewID;
 	Data.WorldPosition = WorldPos;
 	Data.Type = Type;
+	Data.ActiveEdge = ActiveEdge;
 
 	Nodes.Add(NewID.Value, Data);
 	return NewID;
@@ -173,6 +174,7 @@ TArray<FRailEdgeID> URailNetworkSubsystem::GetConnectedEdges(FRailNodeID Node) c
 
 // ---------- GEOMETRY ----------
 
+// Returns a full transform given an edge ID, and a distance along said edge.
 FTransform URailNetworkSubsystem::GetTransformAtDistance(FRailEdgeID Edge, float S) const
 {
 	const FRailEdgeData* E = Edges.Find(Edge.Value);
@@ -222,6 +224,8 @@ FTransform URailNetworkSubsystem::GetTransformAtDistance(FRailEdgeID Edge, float
 
 // ---------- MOVEMENT ----------
 
+
+// The meat and potatoes of our movement system. 
 FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 	FRailEdgeID Edge,
 	float S,
@@ -340,28 +344,102 @@ FRailEdgeID URailNetworkSubsystem::SelectNextEdge(
 	ERailDirection IncomingDir,
 	const FRailMoveContext& Ctx) const
 {
+	
+
 	const FRailNodeData* Node = Nodes.Find(AtNode.Value);
 	if (!Node) return FRailEdgeID();
 
-	// If only one connected edge → dead end
-	if (Node->ConnectedEdges.Num() <= 1)
-		return FRailEdgeID();
+	UE_LOG(LogTemp, Warning, TEXT("SelectNextEdge at Node %d, Type=%d, IncomingEdge=%d"),
+		AtNode.Value,
+		(int32)Node->Type,
+		IncomingEdge.Value);
 
-	// If exactly two edges → take the other one
-	if (Node->ConnectedEdges.Num() == 2)
+	// Build candidate list = all edges except the one we came from
+	TArray<FRailEdgeID> Candidates;
+	for (const FRailEdgeID& E : Node->ConnectedEdges)
 	{
-		return (Node->ConnectedEdges[0].Value == IncomingEdge.Value)
-			? Node->ConnectedEdges[1]
-			: Node->ConnectedEdges[0];
+		if (E.Value != IncomingEdge.Value)
+		{
+			Candidates.Add(E);
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("ConnectedEdges at node %d:"), AtNode.Value);
+	for (const FRailEdgeID& E : Node->ConnectedEdges)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  Edge %d"), E.Value);
 	}
 
-	// Later:
-	// - If switch: consult switch state
-	// - If AI path: follow PlannedEdges
-	// - Else: stop
+	UE_LOG(LogTemp, Warning, TEXT("Candidates after filtering incoming:"));
+	for (const FRailEdgeID& E : Candidates)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  Candidate %d"), E.Value);
+	}
 
-	return FRailEdgeID(); // stop at junction for now
+
+	if (Candidates.Num() == 0)
+	{
+		// Dead end
+		return FRailEdgeID();
+	}
+
+	// -------------------------------------------------
+	// 1) Planned path takes highest priority
+	// -------------------------------------------------
+	if (Ctx.bUsePlannedPath && Ctx.PlannedEdges.IsValidIndex(Ctx.PlannedIndex))
+	{
+		const FRailEdgeID PlannedNext = Ctx.PlannedEdges[Ctx.PlannedIndex];
+
+		for (const FRailEdgeID& Candidate : Candidates)
+		{
+			if (Candidate.Value == PlannedNext.Value)
+			{
+				// NOTE: caller should advance PlannedIndex after successful transition
+				return Candidate;
+			}
+		}
+
+		// Planned path mismatch
+		return FRailEdgeID(); // PathMismatch later if you want
+	}
+
+	// -------------------------------------------------
+	// 2) Switch logic
+	// -------------------------------------------------
+	if (Node->Type == ERailNodeType::Switch)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Node %d is switch. ActiveEdge=%d"),
+			AtNode.Value,
+			Node->ActiveEdge.Value);
+
+		if (Node->ActiveEdge.IsValid())
+		{
+			for (const FRailEdgeID& Candidate : Candidates)
+			{
+				if (Candidate.Value == Node->ActiveEdge.Value)
+				{
+					return Candidate;
+				}
+			}
+
+			// Switch set to an edge that doesn't match this approach
+			return FRailEdgeID(); // SwitchMismatch
+		}
+	}
+
+	// -------------------------------------------------
+	// 3) Fallback: only one valid way forward
+	// -------------------------------------------------
+	if (Candidates.Num() == 1)
+	{
+		return Candidates[0];
+	}
+
+	// -------------------------------------------------
+	// 4) Ambiguous junction → stop
+	// -------------------------------------------------
+	return FRailEdgeID();
 }
+
 
 
 // ---------- BLOCKS ----------
