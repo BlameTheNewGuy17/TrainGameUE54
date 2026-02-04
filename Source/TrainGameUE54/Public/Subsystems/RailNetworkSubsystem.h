@@ -28,7 +28,9 @@ public:
 
 	// ---------- CORE GRAPH ----------
 
-	UFUNCTION(BlueprintCallable) FRailNodeID CreateNode(const FVector& WorldPos, ERailNodeType Type, FRailEdgeID ActiveEdge);
+	UFUNCTION(BlueprintCallable) FRailNodeID CreateNode(const FVector& WorldPos, ERailNodeType Type);
+	UFUNCTION(BlueprintCallable) FRailNodeID CreateSwitchNode(const FVector& WorldPos, const FSwitchNodeData& Data);
+	UFUNCTION(BlueprintCallable) FRailNodeID CreateCrossoverNode(const FVector& WorldPos, const FCrossoverNodeData& Data);
 	UFUNCTION(BlueprintCallable) FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector& TangentA, const FVector& TangentB);
 
 	UFUNCTION(BlueprintCallable) bool RemoveEdge(FRailEdgeID Edge);
@@ -49,6 +51,33 @@ public:
 	UFUNCTION(BlueprintPure)
 	FTransform GetTransformAtDistance(FRailEdgeID Edge, float S) const;
 
+	// ---------- CONSTRAINT SOLVER ----------
+
+	UFUNCTION(BlueprintPure)
+	bool GetPositionAndTangent(
+		const FRailLocation& Loc,
+		FVector& OutPos,
+		FVector& OutTangent
+	) const;
+
+	/*
+	Solve for a trailing rail location such that the WORLD distance
+	to AnchorPos is exactly TargetDist (meters).
+	
+	This is the "no accordion" constraint.
+	*/
+	UFUNCTION(BlueprintCallable)
+	bool SolveTrailingForLinearDistance(
+		const FRailLocation& Anchor,
+		const FVector& AnchorPos,
+		float TargetDist,
+		const FRailLocation& InitialGuess,
+		const FRailMoveContext& Ctx,
+		FRailLocation& OutSolved,
+		int32 MaxNewtonIters = 4,
+		float ToleranceCm = 0.5f
+	);
+
 	// ---------- MOVEMENT ----------
 
 	UFUNCTION(BlueprintCallable)
@@ -57,7 +86,7 @@ public:
 		float S,
 		ERailDirection Dir,
 		float DeltaS,
-		const FRailMoveContext& Ctx);
+		const FRailMoveContext& Ctx) const;
 
 	UFUNCTION(BlueprintCallable)
 	FRailEdgeID SelectNextEdge(
@@ -89,6 +118,8 @@ private:
 
 	// Authoritative storage
 	UPROPERTY(SaveGame) TMap<int32, FRailNodeData> Nodes;
+	UPROPERTY(SaveGame) TMap<int32, FSwitchNodeData> Switches;
+	UPROPERTY(SaveGame) TMap<int32, FCrossoverNodeData> Crossovers;
 	UPROPERTY(SaveGame) TMap<int32, FRailEdgeData> Edges;
 	UPROPERTY(SaveGame) TMap<int32, FRailBlockData> Blocks;
 	UPROPERTY(SaveGame) TMap<int32, FRailSignalData> Signals;

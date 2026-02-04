@@ -93,18 +93,34 @@ void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness
 	}
 }
 
-FRailNodeID URailNetworkSubsystem::CreateNode(const FVector& WorldPos, ERailNodeType Type, FRailEdgeID ActiveEdge)
+FRailNodeID URailNetworkSubsystem::CreateNode(const FVector& WorldPos, ERailNodeType Type)
 {
+	ensureMsgf(Type == ERailNodeType::Control,
+		TEXT("CreateNode used for non-control node. Please use alternative functions."));
+
 	FRailNodeID NewID;
 	NewID.Value = NextNodeID++;
 
-	FRailNodeData Data;
-	Data.ID = NewID;
-	Data.WorldPosition = WorldPos;
-	Data.Type = Type;
-	Data.ActiveEdge = ActiveEdge;
+	FRailNodeData Node;
+	Node.ID = NewID;
+	Node.WorldPosition = WorldPos;
+	Node.Type = Type;
 
-	Nodes.Add(NewID.Value, Data);
+	Nodes.Add(NewID.Value, Node);
+	return NewID;
+}
+
+FRailNodeID URailNetworkSubsystem::CreateSwitchNode(const FVector& WorldPos, const FSwitchNodeData& Data)
+{
+	FRailNodeID NewID = CreateNode(WorldPos, ERailNodeType::Switch);
+	Switches.Add(NewID.Value, Data);
+	return NewID;
+}
+
+FRailNodeID URailNetworkSubsystem::CreateCrossoverNode(const FVector& WorldPos, const FCrossoverNodeData& Data)
+{
+	FRailNodeID NewID = CreateNode(WorldPos, ERailNodeType::Crossover);
+	Crossovers.Add(NewID.Value, Data);
 	return NewID;
 }
 
@@ -222,17 +238,66 @@ FTransform URailNetworkSubsystem::GetTransformAtDistance(FRailEdgeID Edge, float
 	return FTransform(RotMat.Rotator(), Pos);
 }
 
+// ---------- CONSTRAINT SOLVER ----------
+
+bool URailNetworkSubsystem::GetPositionAndTangent(
+	const FRailLocation& Loc,
+	FVector& OutPos,
+	FVector& OutdPdS
+) const
+{
+	return true;
+}
+
+bool URailNetworkSubsystem::SolveTrailingForLinearDistance(
+	const FRailLocation& Anchor,
+	const FVector& AnchorPos,
+	float TargetDist,
+	const FRailLocation& InitialGuess,
+	const FRailMoveContext& Ctx,
+	FRailLocation& OutSolved,
+	int32 MaxNewtonIters,
+	float ToleranceCm
+)
+{
+	const float TargetDist2 = TargetDist * TargetDist;
+	const float Tol2 = FMath::Square(ToleranceCm);
+
+	FRailLocation X = InitialGuess;
+
+	for (int32 i = 0; i < MaxNewtonIters; ++i)
+	{
+		
+	}
+	
+	OutSolved = X;
+	return false;
+}
+
+
 // ---------- MOVEMENT ----------
 
-
 // The meat and potatoes of our movement system. 
+
+// Move point along the network. 
 FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 	FRailEdgeID Edge,
 	float S,
 	ERailDirection Dir,
 	float DeltaS,
-	const FRailMoveContext& Ctx)
+	const FRailMoveContext& Ctx) const
 {
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Advance] THIS=%s Edge=%d s=%.3f Dir=%d Δ=%.3f"),
+		*GetName(),
+		Edge.Value,
+		S,
+		(int32)Dir,
+		DeltaS);
+
+	UE_LOG(LogTemp, Warning, TEXT("[Advance] START Edge=%d s=%.3f Dir=%d Δ=%.3f"),
+		Edge.Value, S, (int32)Dir, DeltaS);
+
 	FRailTravelResult Result;
 	Result.Edge = Edge;
 	Result.Dir = Dir;
@@ -240,7 +305,7 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 
 	float Remaining = DeltaS;
 
-	while (Remaining > 0.f)
+	while (Remaining > KINDA_SMALL_NUMBER)
 	{
 		const FRailEdgeData* E = Edges.Find(Result.Edge.Value);
 		if (!E)
@@ -267,6 +332,12 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 
 		// Case 2: we reach the node
 		Remaining -= DistToEnd;
+		if (Remaining <= KINDA_SMALL_NUMBER)
+		{
+			// We landed exactly on the node; stop cleanly
+			return Result;
+		}
+		
 
 		// Snap exactly to the endpoint
 		Result.S = (Result.Dir == ERailDirection::AToB) ? Length : 0.f;
@@ -279,14 +350,23 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 
 		Result.LastTransitionNode = ArriveNode;
 
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Advance] Hit node %d on Edge %d | DistToEnd=%.3f Remaining=%.3f Dir=%d"),
+			ArriveNode.Value,
+			Result.Edge.Value,
+			DistToEnd,
+			Remaining,
+			(int32)Result.Dir);
+
 		// Choose next edge
 		FRailEdgeID NextEdge = SelectNextEdge(
 			ArriveNode,
 			Result.Edge,
 			Result.Dir,
 			Ctx);
+	
 
-		// If no valid continuation → stop here
+		// If no valid continuation -> stop here
 		if (!NextEdge.IsValid())
 		{
 			Result.bStopped = true;
@@ -310,6 +390,10 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 			Result.StopReason = ERailStopReason::InvalidGraph;
 			return Result;
 		}
+		
+
+		// IMPORTANT: commit edge change immediately
+		Result.Edge = NextEdge;
 
 		// Determine new direction on that edge
 		if (NE->NodeA.Value == ArriveNode.Value)
@@ -329,10 +413,12 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 			Result.StopReason = ERailStopReason::InvalidGraph;
 			return Result;
 		}
-
-		Result.Edge = NextEdge;
-
-		// Loop continues with remaining distance
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Advance] Enter Edge %d at s=%.3f Dir=%d (Len=%.3f)"),
+			Result.Edge.Value,
+			Result.S,
+			(int32)Result.Dir,
+			NE->Length);
 	}
 
 	return Result;
@@ -358,12 +444,13 @@ FRailEdgeID URailNetworkSubsystem::SelectNextEdge(
 	TArray<FRailEdgeID> Candidates;
 	for (const FRailEdgeID& E : Node->ConnectedEdges)
 	{
-		if (E.Value != IncomingEdge.Value)
+		const bool bIsIncoming = (E.Value == IncomingEdge.Value);
+		if (!bIsIncoming || Ctx.bAllowUTurn)
 		{
 			Candidates.Add(E);
 		}
 	}
-	UE_LOG(LogTemp, Warning, TEXT("ConnectedEdges at node %d:"), AtNode.Value);
+	UE_LOG(LogTemp, Warning, TEXT("ConnectedEdges at Node %d:"), AtNode.Value);
 	for (const FRailEdgeID& E : Node->ConnectedEdges)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("  Edge %d"), E.Value);
@@ -375,7 +462,9 @@ FRailEdgeID URailNetworkSubsystem::SelectNextEdge(
 		UE_LOG(LogTemp, Warning, TEXT("  Candidate %d"), E.Value);
 	}
 
-
+	// -------------------------------------------------
+	// 0) Dead end -> stop
+	// -------------------------------------------------
 	if (Candidates.Num() == 0)
 	{
 		// Dead end
@@ -407,27 +496,51 @@ FRailEdgeID URailNetworkSubsystem::SelectNextEdge(
 	// -------------------------------------------------
 	if (Node->Type == ERailNodeType::Switch)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Node %d is switch. ActiveEdge=%d"),
-			AtNode.Value,
-			Node->ActiveEdge.Value);
-
-		if (Node->ActiveEdge.IsValid())
+		if (const FSwitchNodeData* Switch = Switches.Find(AtNode.Value))
 		{
-			for (const FRailEdgeID& Candidate : Candidates)
-			{
-				if (Candidate.Value == Node->ActiveEdge.Value)
-				{
-					return Candidate;
-				}
-			}
+			UE_LOG(LogTemp, Warning, TEXT("Node %d is switch. ActiveEdge=%d"),
+				AtNode.Value,
+				Switch->ActiveEdge.Value);
 
-			// Switch set to an edge that doesn't match this approach
-			return FRailEdgeID(); // SwitchMismatch
+			if (Switch->ActiveEdge.IsValid())
+			{
+				for (const FRailEdgeID& Candidate : Candidates)
+				{
+					if (Candidate.Value == Switch->ActiveEdge.Value)
+					{
+						return Candidate;
+					}
+				}
+
+				return FRailEdgeID(); // SwitchMismatch
+			}
+		}
+		else
+		
+		UE_LOG(LogTemp, Warning, TEXT("Node %d marked Switch but has no SwitchNodeData"), AtNode.Value);
+		{
+		FRailEdgeID(); // SwitchMismatch
 		}
 	}
 
 	// -------------------------------------------------
 	// 3) Fallback: only one valid way forward
+	// -------------------------------------------------
+	if (Node->Type == ERailNodeType::Crossover)
+	{
+		if (const FCrossoverNodeData* Crossover = Crossovers.Find(AtNode.Value))
+		{
+			if (const FRailEdgeID* Exit = Crossover->PairMap.Find(IncomingEdge))
+			{
+				return *Exit;
+			}
+			
+			return FRailEdgeID(); // CrossoverMismatch
+		}
+	}
+	
+	// -------------------------------------------------
+	// 4) Fallback: only one valid way forward
 	// -------------------------------------------------
 	if (Candidates.Num() == 1)
 	{
@@ -435,7 +548,7 @@ FRailEdgeID URailNetworkSubsystem::SelectNextEdge(
 	}
 
 	// -------------------------------------------------
-	// 4) Ambiguous junction → stop
+	// 5) Ambiguous junction -> stop
 	// -------------------------------------------------
 	return FRailEdgeID();
 }
