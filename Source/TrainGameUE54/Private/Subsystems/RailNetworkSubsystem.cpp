@@ -281,27 +281,15 @@ bool URailNetworkSubsystem::SolveTrailingForLinearDistance(
 
 // Move point along the network. 
 FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
-	FRailEdgeID Edge,
-	float S,
-	ERailDirection Dir,
+	FRailLocation Location,
 	float DeltaS,
 	const FRailMoveContext& Ctx) const
 {
-	UE_LOG(LogTemp, Warning,
-		TEXT("[Advance] THIS=%s Edge=%d s=%.3f Dir=%d Δ=%.3f"),
-		*GetName(),
-		Edge.Value,
-		S,
-		(int32)Dir,
-		DeltaS);
-
-	UE_LOG(LogTemp, Warning, TEXT("[Advance] START Edge=%d s=%.3f Dir=%d Δ=%.3f"),
-		Edge.Value, S, (int32)Dir, DeltaS);
 
 	FRailTravelResult Result;
-	Result.Edge = Edge;
-	Result.Dir = Dir;
-	Result.S = S;
+	Result.Edge = Location.Edge;
+	Result.Dir = Location.Dir;
+	Result.S = Location.S;
 
 	float Remaining = DeltaS;
 

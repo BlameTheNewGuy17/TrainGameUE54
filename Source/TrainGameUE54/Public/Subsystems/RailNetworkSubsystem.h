@@ -82,9 +82,7 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	FRailTravelResult AdvanceAlongRails(
-		FRailEdgeID Edge,
-		float S,
-		ERailDirection Dir,
+		FRailLocation Location,
 		float DeltaS,
 		const FRailMoveContext& Ctx) const;
 
