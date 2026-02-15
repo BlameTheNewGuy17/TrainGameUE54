@@ -8,6 +8,10 @@
 #include "RollingStockTypes.h"
 #include "TrainSimulationSubsystem.generated.h"
 
+
+// Forward declare for the RailwayPhysicsCallback Class
+class FRailwayPhysicsCallback;
+
 /**
  * 
  */
@@ -21,13 +25,17 @@ class TRAINGAMEUE54_API UTrainSimulationSubsystem : public UTickableWorldSubsyst
 	virtual bool IsTickable() const override { return true; }
 
 public:
+
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+
 	// ---------- DEBUG ----------
 	UFUNCTION(BlueprintCallable)
 	void DebugDrawRollingStock(float Duration = 0.f, float Thickness = 2.f) const;
 
 	// ---------- CORE ---------
 	UFUNCTION(BlueprintCallable)
-	FRollingStockID AddRollingStock(ERollingStockKind Kind, FRailLocation Location);
+	FRollingStockID AddRollingStock(ERollingStockType Type, FRailLocation Location);
 
 	UFUNCTION(BlueprintCallable)
 	bool RemoveRollingStock(FRollingStockID ID);
@@ -40,4 +48,9 @@ private:
 	// ID generators
 	int32 NextRollingStockID = 1;
 	int32 NextTrainID = 1;
+
+	// Physics
+	FRailwayPhysicsCallback* RailCallback = nullptr;
+
+
 };

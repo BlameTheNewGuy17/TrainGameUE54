@@ -14,6 +14,18 @@ incrementally fill in behavior starting with GetTransformAtDistance.
 
 // ---------- CORE GRAPH ----------
 
+void URailNetworkSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+	UE_LOG(LogTemp, Error, TEXT("RailNetworkSubsystem: World type: %d"), (int32)GetWorld()->WorldType);
+
+}
+
+void URailNetworkSubsystem::OnWorldBeginPlay(UWorld& World)
+{
+	Super::OnWorldBeginPlay(World);
+}
+
 void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness) const
 {
 	UWorld* World = GetWorld();

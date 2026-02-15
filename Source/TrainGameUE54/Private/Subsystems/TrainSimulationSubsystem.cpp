@@ -3,8 +3,19 @@
 
 #include "Subsystems/TrainSimulationSubsystem.h"
 #include "DrawDebugHelpers.h"
+#include "Physics/Experimental/PhysScene_Chaos.h"
+#include "PBDRigidsSolver.h"
+#include "RailwayPhysicsCallback.h"
+#include "Kismet/GameplayStatics.h"
+#include "Components/PrimitiveComponent.h"
+#include "PhysicsEngine/BodyInstance.h"
+#include "Chaos/PhysicsObject.h"
+#include "Chaos/ParticleHandle.h"
 #include "Subsystems/RailNetworkSubsystem.h"
-#include "Stats/Stats.h"
+#include "EngineUtils.h"
+
+
+
 
 TStatId UTrainSimulationSubsystem::GetStatId() const
 {
@@ -13,9 +24,43 @@ TStatId UTrainSimulationSubsystem::GetStatId() const
 
 void UTrainSimulationSubsystem::Tick(float DeltaTime)
 {
-	for (TPair<FRollingStockID, FRollingStockState>& Pair : RollingStockStates)
+	/**TArray<AActor*> Found;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), Found);
+
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 	{
-		AdvanceRollingStock(Pair.Key, DeltaTime);
+		UStaticMeshComponent* Mesh = It->FindComponentByClass<UStaticMeshComponent>();
+		if (!Mesh) continue;
+		FBodyInstance* BI = Mesh->GetBodyInstance();
+		if (!BI || !BI->ActorHandle) continue;
+
+		//int32 ID = BI->ActorHandle->UniqueIdx().Idx;
+
+		**/auto* Input = RailCallback->GetProducerInputData_External();/**
+		//Input->TargetID = ID;
+	}**/
+	
+}
+
+void UTrainSimulationSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+	UE_LOG(LogTemp, Error, TEXT("TrainSimulationSubsystem: World type: %d"), (int32)GetWorld()->WorldType);
+
+}
+
+void UTrainSimulationSubsystem::OnWorldBeginPlay(UWorld& World)
+{
+	Super::OnWorldBeginPlay(World);
+
+	UE_LOG(LogTemp, Warning, TEXT("Registering Chaos callback"));
+
+	if (FPhysScene* Scene = World.GetPhysicsScene())
+	{
+		if (auto* Solver = Scene->GetSolver())
+		{
+			RailCallback = Solver->CreateAndRegisterSimCallbackObject_External<FRailwayPhysicsCallback>();
+		}
 	}
 }
 
@@ -31,48 +76,78 @@ void UTrainSimulationSubsystem::DebugDrawRollingStock(float Duration, float Thic
 	{
 		const FRollingStockState& State = Pair.Value;
 
-		const FTransform Xform = Rail->GetTransformAtDistance(State.Location.Edge, State.Location.S);
-		const FVector Pos = Xform.GetLocation();
-		const FVector Forward = Xform.GetRotation().GetForwardVector();
+		
+		for (const FBogieState& Bogie : State.Bogies)
 
-		// Body
-		DrawDebugSphere(
-			World,
-			Pos,
-			25.f,
-			12,
-			State.bDerailed ? FColor::Red : FColor::Green,
-			false,
-			Duration,
-			0,
-			Thickness
-		);
+		{
+			const FTransform Xform = Rail->GetTransformAtDistance(Bogie.Location.Edge, Bogie.Location.S);
+			const FVector Pos = Xform.GetLocation();
+			const FVector Forward = Xform.GetRotation().GetForwardVector();
 
-		// Direction indicator
-		DrawDebugLine(
-			World,
-			Pos,
-			Pos + Forward * 100.f,
-			FColor::White,
-			false,
-			Duration,
-			0,
-			Thickness
-		);
+			UE_LOG(LogTemp, Warning, TEXT("Bogie S: %f, Offset: %f"), Bogie.Location.S, Bogie.OffsetFromCar);
+
+			// Bogie
+			DrawDebugSphere(
+				World,
+				Pos,
+				25.f,
+				12,
+				State.bDerailed ? FColor::Red : FColor::Green,
+				false,
+				Duration,
+				0,
+				Thickness
+			);
+
+			// Direction indicator
+			DrawDebugLine(
+				World,
+				Pos,
+				Pos + Forward * 100.f,
+				FColor::White,
+				false,
+				Duration,
+				0,
+				Thickness
+			);
+		}
 	}
 }
 
-FRollingStockID UTrainSimulationSubsystem::AddRollingStock(ERollingStockKind Kind, FRailLocation Location)
+FRollingStockID UTrainSimulationSubsystem::AddRollingStock(ERollingStockType Type, FRailLocation Location)
 {
 	FRollingStockID NewID;
 	NewID.Value = NextRollingStockID++;
 
+	// Set up some defaults
 	FRollingStockState State;
 	State.ID = NewID;
-	State.Speed = 100;
-	State.Location = Location;
+	State.Speed = 500;
+	State.Bogies.Add(FBogieState());
+	State.Bogies.Add(FBogieState());
 
+	
+	constexpr float HalfWheelbase = 450.f;
+
+	// Store offset for later calc
+	State.Bogies[0].OffsetFromCar = +HalfWheelbase;
+	State.Bogies[1].OffsetFromCar = -HalfWheelbase;
+
+	// Front bogie at location
+	State.Bogies[0].Location = Location;
+
+	// Rear bogie is location s - wheelbase
+	FRailLocation RearLoc = Location;
+	RearLoc.S -= 2.f * HalfWheelbase; // place behind the front bogie
+	State.Bogies[1].Location = RearLoc;
+
+
+	// Add that fucker to the pile
 	RollingStockStates.Add(NewID, State);
+
+	UE_LOG(LogTemp, Warning, TEXT("Added rolling stock %d with %d bogies"),
+		NewID.Value,
+		State.Bogies.Num());
 
 	return NewID;
 }
@@ -84,21 +159,64 @@ bool UTrainSimulationSubsystem::RemoveRollingStock(FRollingStockID ID)
 
 void UTrainSimulationSubsystem::AdvanceRollingStock(FRollingStockID ID, float DeltaTime)
 {
+
 	FRollingStockState* State = RollingStockStates.Find(ID);
-	if (!State) return;
+	if (!State || State->bSleeping || State->Bogies.Num() == 0) return;
+
+
+	URailNetworkSubsystem* Rail = GetWorld()->GetSubsystem<URailNetworkSubsystem>();
+	if (!Rail) return;
 
 	const float DeltaS = State->Speed * DeltaTime;
 
-	if (URailNetworkSubsystem* Rail = GetWorld()->GetSubsystem<URailNetworkSubsystem>())
+	// Determine lead bogie
+	const bool bAToB = (State->Direction == ERailDirection::AToB);
+	const int32 LeadIndex = 0;// bAToB ? 0 : State->Bogies.Num() - 1;
+
+	FBogieState& LeadBogie = State->Bogies[LeadIndex];
+
+
+
+	UE_LOG(LogTemp, Warning, TEXT("Num=%d Dir=%d LeadIndex=%d  S0=%f S1=%f"),
+		State->Bogies.Num(),
+		(int32)State->Direction,
+		LeadIndex,
+		State->Bogies.IsValidIndex(0) ? State->Bogies[0].Location.S : -999.f,
+		State->Bogies.IsValidIndex(1) ? State->Bogies[1].Location.S : -999.f
+	);
+
+
+	// ---- Advance lead bogie ----
+	FRailTravelResult LeadResult;
+	FRailMoveContext Ctx;
+	Ctx.bEnforceSignals = false;
+	Ctx.bUsePlannedPath = false;
+
+	LeadResult = Rail->AdvanceAlongRails(LeadBogie.Location, DeltaS, Ctx);
+	LeadBogie.Location.Edge = LeadResult.Edge;
+	LeadBogie.Location.Dir = LeadResult.Dir;
+	LeadBogie.Location.S = LeadResult.S;
+
+	// ---- Resolve trailing bogies by constraint ----
+	for (int32 i = 0; i < State->Bogies.Num(); ++i)
 	{
-		FRailTravelResult Result;
-		FRailMoveContext Ctx;
-		Ctx.bEnforceSignals = false;
-		Ctx.bUsePlannedPath = false;
-		Result = Rail->AdvanceAlongRails(State->Location, DeltaS, Ctx);
-		State->Location.Edge = Result.Edge;
-		State->Location.Dir = Result.Dir;
-		State->Location.S = Result.S;
+		
+		if (i == LeadIndex) continue;
+
+		UE_LOG(LogTemp, Warning, TEXT("Updating bogie i=%d (LeadIndex=%d)"), i, LeadIndex);
+
+		FBogieState& Bogie = State->Bogies[i];
+		const float Offset = Bogie.OffsetFromCar - LeadBogie.OffsetFromCar;
+
+		FRailTravelResult R = Rail->AdvanceAlongRails(
+			LeadBogie.Location,
+			-Offset,
+			Ctx
+		);
+
+		Bogie.Location.Edge = R.Edge;
+		Bogie.Location.Dir = R.Dir;
+		Bogie.Location.S = R.S;
 	}
 }
 
