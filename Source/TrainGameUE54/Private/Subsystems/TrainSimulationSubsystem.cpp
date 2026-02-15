@@ -42,14 +42,10 @@ void UTrainSimulationSubsystem::Tick(float DeltaTime)
 		{
 			auto* Input = RailCallback->GetProducerInputData_External();
 			Input->TrackedProxies.Add((void*)Handle);
+			Input->RailNetwork = RailNetworkRef;
+			Input->WorldLocation = It->GetActorLocation();
 		}
 
-    }
-
-    if (Handle)
-    {
-        auto* Input = RailCallback->GetProducerInputData_External();
-		Input->TrackedBodies.Add(Handle);
     }
 }
 
@@ -65,6 +61,8 @@ void UTrainSimulationSubsystem::OnWorldBeginPlay(UWorld& World)
 {
 	Super::OnWorldBeginPlay(World);
 
+	RailNetworkRef = World.GetSubsystem<URailNetworkSubsystem>(); // Store the RailNetworkSubsystem
+
 	UE_LOG(LogTemp, Warning, TEXT("Registering Chaos callback"));
 
 	if (FPhysScene* Scene = World.GetPhysicsScene())
@@ -74,6 +72,24 @@ void UTrainSimulationSubsystem::OnWorldBeginPlay(UWorld& World)
 			RailCallback = Solver->CreateAndRegisterSimCallbackObject_External<FRailwayPhysicsCallback>();
 		}
 	}
+
+	PhysBodyLocation.Edge.Value = 0;
+	PhysBodyLocation.S = 10.f;
+	FVector Loc = RailNetworkRef->GetTransformAtDistance(PhysBodyLocation.Edge, PhysBodyLocation.S).GetLocation();
+
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		UPrimitiveComponent* Prim = It->FindComponentByClass<UPrimitiveComponent>();
+		if (!Prim || !Prim->IsSimulatingPhysics()) continue;
+		AActor* FoundActor = *It;
+		PhysActorRef = FoundActor;
+		break;
+	}
+	if (PhysActorRef)
+	{
+		PhysActorRef->SetActorLocation(Loc);
+	}
+
 }
 
 void UTrainSimulationSubsystem::DebugDrawRollingStock(float Duration, float Thickness) const

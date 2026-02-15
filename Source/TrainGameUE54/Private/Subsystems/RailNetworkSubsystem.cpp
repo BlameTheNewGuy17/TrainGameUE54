@@ -250,6 +250,83 @@ FTransform URailNetworkSubsystem::GetTransformAtDistance(FRailEdgeID Edge, float
 	return FTransform(RotMat.Rotator(), Pos);
 }
 
+bool URailNetworkSubsystem::FindClosestRailLocation(FVector WorldPos, FRailLocation& Out, float& OutDistSq) const
+{
+	const float SampleStep = 100.f;      // cm — coarse pass resolution
+	const float RefineStep = 20.f;       // cm — refinement resolution
+	const int32 RefineIterations = 5;
+
+	bool bFound = false;
+	float BestDistSq = TNumericLimits<float>::Max();
+	FRailLocation BestLoc;
+
+	for (const auto& Pair : Edges)
+	{
+		const FRailEdgeID EdgeID(Pair.Key);
+		const FRailEdgeData& Edge = Pair.Value;
+
+		if (Edge.Length <= KINDA_SMALL_NUMBER)
+			continue;
+
+		float BestSOnEdge = 0.f;
+		float LocalBestDist = TNumericLimits<float>::Max();
+
+		// ---- Coarse sampling pass ----
+		for (float S = 0.f; S <= Edge.Length; S += SampleStep)
+		{
+			const FVector Pos = GetTransformAtDistance(EdgeID, S).GetLocation();
+			const float DistSq = FVector::DistSquared(Pos, WorldPos);
+
+			if (DistSq < LocalBestDist)
+			{
+				LocalBestDist = DistSq;
+				BestSOnEdge = S;
+			}
+		}
+
+		// ---- Refinement pass ----
+		float Step = RefineStep;
+		float Center = BestSOnEdge;
+
+		for (int32 i = 0; i < RefineIterations; ++i)
+		{
+			float Start = FMath::Max(0.f, Center - Step);
+			float End = FMath::Min(Edge.Length, Center + Step);
+
+			for (float S = Start; S <= End; S += Step)
+			{
+				const FVector Pos = GetTransformAtDistance(EdgeID, S).GetLocation();
+				const float DistSq = FVector::DistSquared(Pos, WorldPos);
+
+				if (DistSq < LocalBestDist)
+				{
+					LocalBestDist = DistSq;
+					Center = S;
+				}
+			}
+
+			Step *= 0.5f;
+		}
+
+		// ---- Compare against global best ----
+		if (LocalBestDist < BestDistSq)
+		{
+			BestDistSq = LocalBestDist;
+			BestLoc.Edge = EdgeID;
+			BestLoc.S = Center;
+			bFound = true;
+		}
+	}
+
+	if (bFound)
+	{
+		Out = BestLoc;
+		OutDistSq = BestDistSq;
+	}
+
+	return bFound;
+}
+
 // ---------- CONSTRAINT SOLVER ----------
 
 bool URailNetworkSubsystem::GetPositionAndTangent(

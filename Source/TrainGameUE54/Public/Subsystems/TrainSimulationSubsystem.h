@@ -9,8 +9,9 @@
 #include "TrainSimulationSubsystem.generated.h"
 
 
-// Forward declare for the RailwayPhysicsCallback Class
+// Forward declarations
 class FRailwayPhysicsCallback;
+class URailNetworkSubsystem;
 
 /**
  * 
@@ -49,8 +50,11 @@ private:
 	int32 NextRollingStockID = 1;
 	int32 NextTrainID = 1;
 
+	URailNetworkSubsystem* RailNetworkRef = nullptr;
+
 	// Physics
 	FRailwayPhysicsCallback* RailCallback = nullptr;
 
-
+	AActor* PhysActorRef = nullptr;
+	FRailLocation PhysBodyLocation;
 };

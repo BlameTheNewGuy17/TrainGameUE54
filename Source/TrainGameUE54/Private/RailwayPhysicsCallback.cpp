@@ -1,11 +1,14 @@
 #include "RailwayPhysicsCallback.h"
 #include "Chaos/DebugDrawQueue.h"
 #include "PBDRigidsSolver.h"
+#include "Subsystems/RailNetworkSubsystem.h"
+
 
 using namespace Chaos;
 
 void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 {
+	
 	// We are running on the PT here...
 	if (FPBDRigidsSolver* MySolver = static_cast<FPBDRigidsSolver*>(GetSolver()))
 	{
@@ -16,6 +19,8 @@ void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 			// Iterate over all the currenly simulated rigid bodies - They are named Particles in Chaos. 
 			TParticleView<FPBDRigidParticles> ActiveParticles = MySolver->GetParticles().GetNonDisabledDynamicView();
 
+			bool bFound = false;
+
 			for (auto& ActiveParticle : ActiveParticles)
 			{
 				
@@ -23,16 +28,22 @@ void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 				// It's a litte crude, but I swear to god I could not find any other way to access or verify ID.
 
 				auto* Proxy = (void*)ActiveParticle.PhysicsProxy();
-				if (Input->TrackedProxies.Num() == 0) return;
+				if (Input->TrackedProxies.Num() == 0) continue;
 				if (Proxy != Input->TrackedProxies[0]) continue;
 
+				if (!Input->RailNetwork) continue;
 
-				// Little test code. Takes whatever handle we have stored, and make it fly.
-				auto V = ActiveParticle.V();
-				V.Z += 50;
-				ActiveParticle.SetV(V);
-				//UE_LOG(LogTemp, Error, TEXT("OnPreIntegrate_Callback: Adding 50 to Active Particle Z Velocity."));
+				FRailLocation TempLoc;
+				float DistSq = 0.f;
+				FVector ParticlePos = ActiveParticle.X();
+
+				Input->RailNetwork->FindClosestRailLocation(ParticlePos, TempLoc, DistSq);
+
+				CachedLoc = TempLoc;
+				CachedDistSq = DistSq;
+				bFound = true;
 			}
+			bHasResult = bFound;
 		}
 	}
 }
@@ -40,5 +51,15 @@ void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 
 void FRailwayPhysicsCallback::OnPreSimulate_Internal()
 {
+
+}
+
+void FRailwayPhysicsCallback::OnPostIntegrate_Internal()
+{
+	if (!bHasResult)
+		return;
+	FRailwayPhysicsCallbackOutput& Out = GetProducerOutputData_Internal();
+	Out.RailLocation = CachedLoc;
+	Out.DistSq = CachedDistSq;
 
 }

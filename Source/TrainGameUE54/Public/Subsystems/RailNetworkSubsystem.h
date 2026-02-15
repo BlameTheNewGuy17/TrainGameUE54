@@ -55,6 +55,9 @@ public:
 	UFUNCTION(BlueprintPure)
 	FTransform GetTransformAtDistance(FRailEdgeID Edge, float S) const;
 
+	UFUNCTION(BlueprintPure)
+	bool FindClosestRailLocation(FVector WorldPos, FRailLocation& Out, float& OutDistSq) const;
+
 	// ---------- CONSTRAINT SOLVER ----------
 
 	UFUNCTION(BlueprintPure)
