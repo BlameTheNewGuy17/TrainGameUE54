@@ -42,6 +42,26 @@ void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 				CachedLoc = TempLoc;
 				CachedDistSq = DistSq;
 				bFound = true;
+
+				FVector RailPos = Input->RailNetwork
+					->GetTransformAtDistance(TempLoc.Edge, TempLoc.S)
+					.GetLocation();
+
+				FVector RailTangent = Input->RailNetwork
+					->GetTransformAtDistance(TempLoc.Edge, TempLoc.S)
+					.GetRotation()
+					.GetForwardVector()
+					.GetSafeNormal();
+
+				FVector Vel = ActiveParticle.V();
+
+				FVector NewVel = RailTangent * FVector::DotProduct(Vel, RailTangent);
+
+				ActiveParticle.SetV(NewVel);
+
+				FVector ToRail = RailPos - ActiveParticle.X();
+				ActiveParticle.SetX(ActiveParticle.X() + ToRail * 0.2f);
+
 			}
 			bHasResult = bFound;
 		}
