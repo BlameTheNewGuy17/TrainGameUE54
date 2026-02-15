@@ -8,9 +8,6 @@
 #include "RailwayPhysicsCallback.h"
 #include "Kismet/GameplayStatics.h"
 #include "Components/PrimitiveComponent.h"
-#include "PhysicsEngine/BodyInstance.h"
-#include "Chaos/PhysicsObject.h"
-#include "Chaos/ParticleHandle.h"
 #include "Subsystems/RailNetworkSubsystem.h"
 #include "EngineUtils.h"
 
@@ -24,28 +21,43 @@ TStatId UTrainSimulationSubsystem::GetStatId() const
 
 void UTrainSimulationSubsystem::Tick(float DeltaTime)
 {
-	/**TArray<AActor*> Found;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), Found);
 
-	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
-	{
-		UStaticMeshComponent* Mesh = It->FindComponentByClass<UStaticMeshComponent>();
-		if (!Mesh) continue;
-		FBodyInstance* BI = Mesh->GetBodyInstance();
-		if (!BI || !BI->ActorHandle) continue;
+	// Right now we only store a single callback handle pointer. 
+	// We do a simple GetAllActorsInWorld type thing, and store the first one that we find that is simulating physics
+	// Eventually we'll replace this with the list of currently loaded RollingStockActors. 
 
-		//int32 ID = BI->ActorHandle->UniqueIdx().Idx;
+    if (!RailCallback) return;
 
-		**/auto* Input = RailCallback->GetProducerInputData_External();/**
-		//Input->TargetID = ID;
-	}**/
-	
+	FPhysicsActorHandle Handle = nullptr;
+
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        UPrimitiveComponent* Prim = It->FindComponentByClass<UPrimitiveComponent>();
+        if (!Prim || !Prim->IsSimulatingPhysics()) continue;
+
+		if (FBodyInstance* BI = Prim->GetBodyInstance())
+
+		Handle = BI->GetPhysicsActorHandle();
+		if (Handle)
+		{
+			auto* Input = RailCallback->GetProducerInputData_External();
+			Input->TrackedProxies.Add((void*)Handle);
+		}
+
+    }
+
+    if (Handle)
+    {
+        auto* Input = RailCallback->GetProducerInputData_External();
+		Input->TrackedBodies.Add(Handle);
+    }
 }
+
 
 void UTrainSimulationSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	UE_LOG(LogTemp, Error, TEXT("TrainSimulationSubsystem: World type: %d"), (int32)GetWorld()->WorldType);
+	//UE_LOG(LogTemp, Error, TEXT("TrainSimulationSubsystem: World type: %d"), (int32)GetWorld()->WorldType);
 
 }
 

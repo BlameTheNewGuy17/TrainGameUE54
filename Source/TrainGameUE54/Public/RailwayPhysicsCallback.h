@@ -13,11 +13,12 @@ struct FRailSomethingData
 
 struct TRAINGAMEUE54_API FRailwayPhysicsCallbackInput : public Chaos::FSimCallbackInput
 {
-	int32 TargetID = INDEX_NONE;
-
+	TArray<void*> TrackedProxies;
+	TArray<FPhysicsActorHandle> TrackedBodies;
 	void Reset()
 	{
-		TargetID = INDEX_NONE;
+		TrackedProxies.Empty();
+		TrackedBodies.Empty();
 	}
 	
 };
