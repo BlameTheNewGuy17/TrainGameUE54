@@ -28,25 +28,33 @@ void UTrainSimulationSubsystem::Tick(float DeltaTime)
 
     if (!RailCallback) return;
 
-	FPhysicsActorHandle Handle = nullptr;
+	auto* Input = RailCallback->GetProducerInputData_External();
+	Input->RailNetwork = RailNetworkRef;
 
-    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
-    {
-        UPrimitiveComponent* Prim = It->FindComponentByClass<UPrimitiveComponent>();
-        if (!Prim || !Prim->IsSimulatingPhysics()) continue;
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		UPrimitiveComponent* Prim = It->FindComponentByClass<UPrimitiveComponent>();
+		if (!Prim || !Prim->IsSimulatingPhysics()) continue;
 
-		if (FBodyInstance* BI = Prim->GetBodyInstance())
+		FBodyInstance* BI = Prim->GetBodyInstance();
+		if (!BI) continue;
 
-		Handle = BI->GetPhysicsActorHandle();
-		if (Handle)
+		FPhysicsActorHandle Handle = BI->GetPhysicsActorHandle();
+		if (!Handle) continue;
+
+		void* ProxyKey = (void*)Handle;
+
+		const int32 ExistingIdx = Input->Bodies.IndexOfByPredicate(
+			[ProxyKey](const FTrackedRailBody& B) { return B.Proxy == ProxyKey; });
+
+		if (ExistingIdx == INDEX_NONE)
 		{
-			auto* Input = RailCallback->GetProducerInputData_External();
-			Input->TrackedProxies.Add((void*)Handle);
-			Input->RailNetwork = RailNetworkRef;
-			Input->WorldLocation = It->GetActorLocation();
+			FTrackedRailBody NewBody;
+			NewBody.Proxy = ProxyKey;
+			NewBody.Profile = FRailConstraintProfile(); // later: pull from actor/blueprint
+			Input->Bodies.Add(NewBody);
 		}
-
-    }
+	}
 }
 
 

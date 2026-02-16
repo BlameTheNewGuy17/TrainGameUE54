@@ -5,28 +5,24 @@
 #include "Chaos/PhysicsObject.h"
 #include "Chaos/ParticleHandle.h"
 #include "Subsystems/RailNetworkSubsystem.h"
+#include "RailConstraintHelpers.h"
 
-struct FRailSomethingData
+struct FTrackedRailBody
 {
-	FVector Location;
-	double MassDotG;
+	void* Proxy;
+	FRailConstraintProfile Profile;
 };
 
 struct TRAINGAMEUE54_API FRailwayPhysicsCallbackInput : public Chaos::FSimCallbackInput
 {
 	URailNetworkSubsystem* RailNetwork = nullptr;
-
-	FRailLocation RailLocation;
-	FVector WorldLocation = FVector::ZeroVector;
-
-	TArray<void*> TrackedProxies;
+	TArray<FTrackedRailBody> Bodies;
 
 	void Reset()
 	{
 		RailNetwork = nullptr;
-		TrackedProxies.Empty();
+		Bodies.Empty();
 	}
-	
 };
 
 struct TRAINGAMEUE54_API FRailwayPhysicsCallbackOutput : public Chaos::FSimCallbackOutput
@@ -47,7 +43,7 @@ public:
 	FRailwayPhysicsCallback() = default;
 
 	FRailLocation CachedLoc;
-	float CachedDistSq;
+	float CachedDistSq = 0.f;
 
 	bool bHasResult = false;
 

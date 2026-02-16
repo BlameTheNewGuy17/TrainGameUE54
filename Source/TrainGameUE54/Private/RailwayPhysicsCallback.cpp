@@ -28,39 +28,70 @@ void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 				// It's a litte crude, but I swear to god I could not find any other way to access or verify ID.
 
 				auto* Proxy = (void*)ActiveParticle.PhysicsProxy();
-				if (Input->TrackedProxies.Num() == 0) continue;
-				if (Proxy != Input->TrackedProxies[0]) continue;
+
+				if (Input->Bodies.Num() == 0) continue;
+
+				int32 FoundIndex = Input->Bodies.IndexOfByPredicate(
+					[Proxy](const FTrackedRailBody& B) { return B.Proxy == Proxy; });
+
+				if (FoundIndex == INDEX_NONE) continue;
+
+				const FRailConstraintProfile& Profile = Input->Bodies[FoundIndex].Profile;
 
 				if (!Input->RailNetwork) continue;
 
+		
 				FRailLocation TempLoc;
 				float DistSq = 0.f;
+
+				// --- 1. Get the particle's REAL physics position (not cached GT position)
 				FVector ParticlePos = ActiveParticle.X();
 
+				// --- 2. Project world position -> rail coordinate (Edge + S)
 				Input->RailNetwork->FindClosestRailLocation(ParticlePos, TempLoc, DistSq);
 
+				// cache result so GT can read it later
 				CachedLoc = TempLoc;
 				CachedDistSq = DistSq;
 				bFound = true;
 
-				FVector RailPos = Input->RailNetwork
-					->GetTransformAtDistance(TempLoc.Edge, TempLoc.S)
-					.GetLocation();
 
-				FVector RailTangent = Input->RailNetwork
-					->GetTransformAtDistance(TempLoc.Edge, TempLoc.S)
-					.GetRotation()
-					.GetForwardVector()
-					.GetSafeNormal();
+				// --- 3. Sample rail transform at that coordinate
+				// This gives us the rail's frame of reference at S
+				FTransform RailTransform =
+					Input->RailNetwork->GetTransformAtDistance(TempLoc.Edge, TempLoc.S);
 
+				FVector RailPos = RailTransform.GetLocation();
+
+				// Forward vector of spline = rail direction
+				FVector RailTangent =
+					RailTransform.GetRotation().GetForwardVector().GetSafeNormal();
+
+
+				// --- 4. Read current physics velocity
 				FVector Vel = ActiveParticle.V();
 
-				FVector NewVel = RailTangent * FVector::DotProduct(Vel, RailTangent);
+				// --- 5. Compute the new velocity
+				FVector NewVel = ComputeRailVelocity(
+					Vel,
+					RailTangent,
+					Profile,
+					GetDeltaTime_Internal()
+				);
 
+				// --- 6. Apply corrected velocity back to particle
 				ActiveParticle.SetV(NewVel);
 
-				FVector ToRail = RailPos - ActiveParticle.X();
-				ActiveParticle.SetX(ActiveParticle.X() + ToRail * 0.2f);
+
+				// --- Constrain position to rail
+				FVector Correction = ComputeRailCorrection(
+					ActiveParticle.X(),
+					RailPos,
+					Profile,
+					GetDeltaTime_Internal()
+				);
+
+				ActiveParticle.SetX(ActiveParticle.X() + Correction);
 
 			}
 			bHasResult = bFound;
