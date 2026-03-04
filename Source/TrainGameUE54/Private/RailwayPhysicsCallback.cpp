@@ -6,6 +6,12 @@
 
 using namespace Chaos;
 
+
+void FRailwayPhysicsCallback::OnPreSimulate_Internal()
+{
+
+}
+
 void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 {
 	
@@ -16,10 +22,12 @@ void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 		const FRailwayPhysicsCallbackInput* Input = GetConsumerInput_Internal();
 		if (Input)
 		{
+			CachedVelPre.SetNumZeroed(Input->Bodies.Num());
+			CachedVelPost.SetNumZeroed(Input->Bodies.Num());
+			CachedImpulse.SetNumZeroed(Input->Bodies.Num());
+
 			// Iterate over all the currenly simulated rigid bodies - They are named Particles in Chaos. 
 			TParticleView<FPBDRigidParticles> ActiveParticles = MySolver->GetParticles().GetNonDisabledDynamicView();
-
-			bool bFound = false;
 
 			for (auto& ActiveParticle : ActiveParticles)
 			{
@@ -40,77 +48,155 @@ void FRailwayPhysicsCallback::OnPreIntegrate_Internal()
 
 				if (!Input->RailNetwork) continue;
 
+				if (Input->Bodies[FoundIndex].bDerailed)
+					continue;
+
 		
 				FRailLocation TempLoc;
 				float DistSq = 0.f;
 
-				// --- 1. Get the particle's REAL physics position (not cached GT position)
+				// --- Get the particle's REAL physics position (not cached GT position)
 				FVector ParticlePos = ActiveParticle.X();
 
-				// --- 2. Project world position -> rail coordinate (Edge + S)
+				// --- Project world position -> rail coordinate (Edge + S)
 				Input->RailNetwork->FindClosestRailLocation(ParticlePos, TempLoc, DistSq);
 
-				// cache result so GT can read it later
-				CachedLoc = TempLoc;
-				CachedDistSq = DistSq;
-				bFound = true;
-
-
-				// --- 3. Sample rail transform at that coordinate
+				// ---  Sample rail transform at that coordinate
 				// This gives us the rail's frame of reference at S
-				FTransform RailTransform =
-					Input->RailNetwork->GetTransformAtDistance(TempLoc.Edge, TempLoc.S);
+				FTransform RailTransform = Input->RailNetwork->GetTransformAtDistance(TempLoc.Edge, TempLoc.S);
 
 				FVector RailPos = RailTransform.GetLocation();
 
 				// Forward vector of spline = rail direction
-				FVector RailTangent =
-					RailTransform.GetRotation().GetForwardVector().GetSafeNormal();
+				FVector RailTangent = RailTransform.GetRotation().GetForwardVector().GetSafeNormal();
 
 
-				// --- 4. Read current physics velocity
-				FVector Vel = ActiveParticle.V();
-
-				// --- 5. Compute the new velocity
-				FVector NewVel = ComputeRailVelocity(
-					Vel,
-					RailTangent,
-					Profile,
-					GetDeltaTime_Internal()
-				);
-
-				// --- 6. Apply corrected velocity back to particle
+				// --- Read current physics velocity, compute new, and apply
+				FVector CurrentVel = ActiveParticle.V();
+				FVector NewVel = ComputeRailVelocity(CurrentVel, RailTangent, Profile, GetDeltaTime_Internal());
 				ActiveParticle.SetV(NewVel);
 
 
 				// --- Constrain position to rail
-				FVector Correction = ComputeRailCorrection(
-					ActiveParticle.X(),
-					RailPos,
-					Profile,
-					GetDeltaTime_Internal()
-				);
+				FVector CurrentPos = ActiveParticle.X();
+				FVector PosCorrection = ComputeRailPositionCorrection(CurrentPos, RailPos, RailTangent, Profile, GetDeltaTime_Internal());
+				ActiveParticle.SetX(ActiveParticle.X() + PosCorrection);
 
-				ActiveParticle.SetX(ActiveParticle.X() + Correction);
+				// --- Constrain the rotation to rail
+				FQuat CurrentRot = ActiveParticle.R();
+				FVector CurrentAngVel = ActiveParticle.W();
+				FVector AngVelCorrection = ComputeRailAngularVelocityCorrection(CurrentRot, RailTransform.GetRotation(), CurrentAngVel, Profile, GetDeltaTime_Internal());
+				ActiveParticle.SetW(CurrentAngVel + AngVelCorrection);
+
+
+				CachedVelPre[FoundIndex] = ActiveParticle.V();
+
+				//UE_LOG(LogTemp, Warning, TEXT("Sleeping: %d"), ActiveParticle.Sleeping());
 
 			}
-			bHasResult = bFound;
 		}
 	}
 }
 
-
-void FRailwayPhysicsCallback::OnPreSimulate_Internal()
+void FRailwayPhysicsCallback::OnPostIntegrate_Internal()
 {
+	// We are running on the PT here...
+	if (FPBDRigidsSolver* MySolver = static_cast<FPBDRigidsSolver*>(GetSolver()))
+	{
+		// Get a reference to the PT input structure
+		const FRailwayPhysicsCallbackInput* Input = GetConsumerInput_Internal();
+		if (Input)
+		{
+			// Iterate over all the currenly simulated rigid bodies - They are named Particles in Chaos. 
+			TParticleView<FPBDRigidParticles> ActiveParticles = MySolver->GetParticles().GetNonDisabledDynamicView();
+
+			for (auto& ActiveParticle : ActiveParticles)
+			{
+
+				// Filter for the actors we care about by comparing raw pointers.
+				// It's a litte crude, but I swear to god I could not find any other way to access or verify ID.
+
+				auto* Proxy = (void*)ActiveParticle.PhysicsProxy();
+
+				if (Input->Bodies.Num() == 0) continue;
+
+				int32 FoundIndex = Input->Bodies.IndexOfByPredicate(
+					[Proxy](const FTrackedRailBody& B) { return B.Proxy == Proxy; });
+
+				if (FoundIndex == INDEX_NONE) continue;
+
+				if (!Input->RailNetwork) continue;
+
+				if (Input->Bodies[FoundIndex].bDerailed)
+					continue;
+
+				CachedVelPost[FoundIndex] = ActiveParticle.V();
+				CachedImpulse[FoundIndex] = (CachedVelPost[FoundIndex] - CachedVelPre[FoundIndex]).Size();
+			}
+		}
+	}
 
 }
 
-void FRailwayPhysicsCallback::OnPostIntegrate_Internal()
+void FRailwayPhysicsCallback::OnPostSolve_Internal()
 {
-	if (!bHasResult)
-		return;
-	FRailwayPhysicsCallbackOutput& Out = GetProducerOutputData_Internal();
-	Out.RailLocation = CachedLoc;
-	Out.DistSq = CachedDistSq;
+	FRailwayPhysicsCallbackOutput& Output = GetProducerOutputData_Internal();
 
+	// We are running on the PT here...
+	if (FPBDRigidsSolver* MySolver = static_cast<FPBDRigidsSolver*>(GetSolver()))
+	{
+		// Get a reference to the PT input structure
+		const FRailwayPhysicsCallbackInput* Input = GetConsumerInput_Internal();
+		if (Input)
+		{
+			Output.Bodies = Input->Bodies;
+
+			// Iterate over all the currenly simulated rigid bodies - They are named Particles in Chaos. 
+			TParticleView<FPBDRigidParticles> ActiveParticles = MySolver->GetParticles().GetNonDisabledDynamicView();
+
+			for (auto& ActiveParticle : ActiveParticles)
+			{
+
+				// Filter for the actors we care about by comparing raw pointers.
+				// It's a litte crude, but I swear to god I could not find any other way to access or verify ID.
+
+				auto* Proxy = (void*)ActiveParticle.PhysicsProxy();
+
+				if (Input->Bodies.Num() == 0) continue;
+
+				int32 FoundIndex = Input->Bodies.IndexOfByPredicate(
+					[Proxy](const FTrackedRailBody& B) { return B.Proxy == Proxy; });
+
+				if (FoundIndex == INDEX_NONE) continue;
+
+				if (!Input->RailNetwork) continue;
+
+				if (Input->Bodies[FoundIndex].bDerailed)
+					continue;
+
+				FVector tempWorldLoc = ActiveParticle.X();
+				FRailLocation tempRailLoc;
+				float distSq = 0.f;
+				Input->RailNetwork->FindClosestRailLocation(tempWorldLoc, tempRailLoc, distSq);
+				FTransform RailTransform = Input->RailNetwork->GetTransformAtDistance(tempRailLoc.Edge, tempRailLoc.S);
+				FVector RailRightVector = RailTransform.GetRotation().GetRightVector();
+
+
+				FVector Vel = ActiveParticle.V();
+				float LateralSpeed = FVector::DotProduct(Vel, RailRightVector);
+				float AbsLat = FMath::Abs(LateralSpeed);
+				UE_LOG(LogTemp, Warning, TEXT("Absolute Lateral Speed for body %d is %f"), FoundIndex, AbsLat);
+
+				float Stress = FMath::Lerp(Input->Bodies[FoundIndex].StressAccumulator, AbsLat, 0.2f);
+				Output.Bodies[FoundIndex].StressAccumulator = Stress;
+				UE_LOG(LogTemp, Warning, TEXT("Stress for body %d is %f"), FoundIndex, Stress);
+
+
+				if (Stress > DerailThreshold) {
+					Output.Bodies[FoundIndex].bDerailed = true;
+					UE_LOG(LogTemp, Error, TEXT("Body %d derailed"), FoundIndex);
+				}
+			}
+		}
+	}
 }

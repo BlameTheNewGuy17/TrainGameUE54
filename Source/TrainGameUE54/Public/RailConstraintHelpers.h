@@ -27,16 +27,45 @@ FORCEINLINE FVector ComputeRailVelocity(
 	return Result;
 }
 
-
-FORCEINLINE FVector ComputeRailCorrection(
+FORCEINLINE FVector ComputeRailPositionCorrection(
 	const FVector& CurrentPos,
-    const FVector& RailPos,
+    const FVector& TargetRailPos,
+	const FVector& Tangent,
     const FRailConstraintProfile& Settings,
     float Dt)
 {
-	// vector from particle -> rail centerline
-	FVector ToRail = RailPos - CurrentPos;
+	FVector ToRail = TargetRailPos - CurrentPos;
+	//FVector Lateral = ToRail - FVector::DotProduct(ToRail, Tangent) * Tangent;
+	//return Lateral * Settings.StickStrength * Dt;
 
 	// soft constraint toward spline
 	return ToRail * Settings.StickStrength;
+}
+
+FORCEINLINE FVector ComputeRailAngularVelocityCorrection(
+	const FQuat& CurrentRot,
+	const FQuat& TargetRailRot,
+	const FVector& CurrentAngVel,
+	const FRailConstraintProfile& Settings,
+	float Dt)
+{
+	FQuat Delta = TargetRailRot * CurrentRot.Inverse();
+
+	FVector Axis;
+	float Angle;
+	Delta.ToAxisAndAngle(Axis, Angle);
+
+	Angle = FMath::UnwindRadians(Angle);
+	Angle = FMath::Clamp(Angle, -Settings.MaxAngleCorrection, Settings.MaxAngleCorrection);
+
+	if (FMath::Abs(Angle) < 1e-4f)
+		return FVector::ZeroVector;
+
+	Axis.Normalize();
+
+	Dt = FMath::Max(Dt, 1e-4f);
+	FVector ToRail = Axis * (Angle * Settings.AlignmentStrength / Dt);
+	FVector Damping = -CurrentAngVel * Settings.AngularDampening;
+
+	return ToRail + Damping;
 }

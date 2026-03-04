@@ -6,6 +6,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "RailNetworkTypes.h"
 #include "RollingStockTypes.h"
+#include "RailwayPhysicsCallback.h"
 #include "TrainSimulationSubsystem.generated.h"
 
 
@@ -53,8 +54,15 @@ private:
 	URailNetworkSubsystem* RailNetworkRef = nullptr;
 
 	// Physics
+
+	bool bUsePhysics = false;
+
 	FRailwayPhysicsCallback* RailCallback = nullptr;
 
-	AActor* PhysActorRef = nullptr;
-	FRailLocation PhysBodyLocation;
+	TArray<AActor*> PhysActorRefs;
+	TMap<FRollingStockID, TWeakObjectPtr<AActor>> IDToActor;
+	TMap<FRollingStockID, FTrackedRailBody> CachedTrackedBodies;
+
+	TMap<FRollingStockID, FTrackedRailBody> RailBodyRegistry;
+
 };

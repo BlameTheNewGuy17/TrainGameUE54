@@ -19,45 +19,6 @@ TStatId UTrainSimulationSubsystem::GetStatId() const
 	RETURN_QUICK_DECLARE_CYCLE_STAT(UTrainSimulationSubsystem, STATGROUP_Tickables);
 }
 
-void UTrainSimulationSubsystem::Tick(float DeltaTime)
-{
-
-	// Right now we only store a single callback handle pointer. 
-	// We do a simple GetAllActorsInWorld type thing, and store the first one that we find that is simulating physics
-	// Eventually we'll replace this with the list of currently loaded RollingStockActors. 
-
-    if (!RailCallback) return;
-
-	auto* Input = RailCallback->GetProducerInputData_External();
-	Input->RailNetwork = RailNetworkRef;
-
-	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
-	{
-		UPrimitiveComponent* Prim = It->FindComponentByClass<UPrimitiveComponent>();
-		if (!Prim || !Prim->IsSimulatingPhysics()) continue;
-
-		FBodyInstance* BI = Prim->GetBodyInstance();
-		if (!BI) continue;
-
-		FPhysicsActorHandle Handle = BI->GetPhysicsActorHandle();
-		if (!Handle) continue;
-
-		void* ProxyKey = (void*)Handle;
-
-		const int32 ExistingIdx = Input->Bodies.IndexOfByPredicate(
-			[ProxyKey](const FTrackedRailBody& B) { return B.Proxy == ProxyKey; });
-
-		if (ExistingIdx == INDEX_NONE)
-		{
-			FTrackedRailBody NewBody;
-			NewBody.Proxy = ProxyKey;
-			NewBody.Profile = FRailConstraintProfile(); // later: pull from actor/blueprint
-			Input->Bodies.Add(NewBody);
-		}
-	}
-}
-
-
 void UTrainSimulationSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
@@ -71,33 +32,111 @@ void UTrainSimulationSubsystem::OnWorldBeginPlay(UWorld& World)
 
 	RailNetworkRef = World.GetSubsystem<URailNetworkSubsystem>(); // Store the RailNetworkSubsystem
 
-	UE_LOG(LogTemp, Warning, TEXT("Registering Chaos callback"));
-
-	if (FPhysScene* Scene = World.GetPhysicsScene())
+	if (bUsePhysics)
 	{
-		if (auto* Solver = Scene->GetSolver())
+		if (FPhysScene* Scene = World.GetPhysicsScene())
 		{
-			RailCallback = Solver->CreateAndRegisterSimCallbackObject_External<FRailwayPhysicsCallback>();
+			if (auto* Solver = Scene->GetSolver())
+			{
+				RailCallback = Solver->CreateAndRegisterSimCallbackObject_External<FRailwayPhysicsCallback>();
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("Registered Chaos callback"));
+
+
+		// Clear actor refs just to be safe
+		PhysActorRefs.Empty();
+
+		// Loop through world and store all Actors using Physics. We'll replace this later with currently loaded Rolling Stock or whatever.
+		for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+		{
+			UPrimitiveComponent* Prim = It->FindComponentByClass<UPrimitiveComponent>();
+			if (!Prim || !Prim->IsSimulatingPhysics()) continue;
+
+			AActor* Actor = *It;
+
+			// All data should be pulled from the actor, but for now we just fill it with blank data
+			FRollingStockID ID;
+			ID.Value = Actor->GetUniqueID();
+
+			FTrackedRailBody Body;
+			Body.ID = ID;
+			Body.Owner = Actor; // except this, it's the actor reference, idiot
+			Body.Profile = FRailConstraintProfile();
+			Body.bDerailed = false;
+
+			RailBodyRegistry.Add(ID, Body);
 		}
 	}
-
-	PhysBodyLocation.Edge.Value = 0;
-	PhysBodyLocation.S = 10.f;
-	FVector Loc = RailNetworkRef->GetTransformAtDistance(PhysBodyLocation.Edge, PhysBodyLocation.S).GetLocation();
-
-	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	else
 	{
-		UPrimitiveComponent* Prim = It->FindComponentByClass<UPrimitiveComponent>();
-		if (!Prim || !Prim->IsSimulatingPhysics()) continue;
-		AActor* FoundActor = *It;
-		PhysActorRef = FoundActor;
-		break;
-	}
-	if (PhysActorRef)
-	{
-		PhysActorRef->SetActorLocation(Loc);
-	}
 
+	}
+}
+
+void UTrainSimulationSubsystem::Tick(float DeltaTime)
+{
+	if (bUsePhysics)
+	{
+		if (!RailCallback) return;
+
+		while (auto OutputHandle = RailCallback->PopOutputData_External())
+		{
+			const auto* Output = OutputHandle.Get();
+			if (!Output) continue;
+
+			for (const FTrackedRailBody& OutBody : Output->Bodies)
+			{
+				if (FTrackedRailBody* Stored = RailBodyRegistry.Find(OutBody.ID))
+				{
+					Stored->bDerailed = OutBody.bDerailed;
+					Stored->StressAccumulator = OutBody.StressAccumulator;
+				}
+			}
+		}
+
+
+		auto* Input = RailCallback->GetProducerInputData_External();
+		Input->RailNetwork = RailNetworkRef;
+
+		Input->Bodies.Reset();
+
+		for (auto& Pair : RailBodyRegistry)
+		{
+			FTrackedRailBody& Stored = Pair.Value;
+
+			if (!Stored.Owner.IsValid())
+				continue;
+
+			TArray<UPrimitiveComponent*> Comps;
+			Stored.Owner->GetComponents<UPrimitiveComponent>(Comps);
+
+			for (UPrimitiveComponent* Comp : Comps)
+			{
+				if (!Comp->IsSimulatingPhysics())
+					continue;
+
+				if (Comp->GetCollisionObjectType() != ECC_Truck)
+					continue;
+
+				if (FBodyInstance* BI = Comp->GetBodyInstance())
+				{
+					FPhysicsActorHandle Handle = BI->GetPhysicsActorHandle();
+					if (Handle)
+					{
+						FTrackedRailBody Copy = Stored;
+						Copy.Proxy = (void*)Handle;
+						Input->Bodies.Add(Copy);
+					}
+				}
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("Num Bodies: %d"), Input->Bodies.Num());
+	}
+	else
+	{
+
+	}
 }
 
 void UTrainSimulationSubsystem::DebugDrawRollingStock(float Duration, float Thickness) const
