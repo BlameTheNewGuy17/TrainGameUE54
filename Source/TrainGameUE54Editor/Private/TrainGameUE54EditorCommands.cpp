@@ -13,8 +13,9 @@ FTrainGameUE54EditorCommands::FTrainGameUE54EditorCommands()
 
 void FTrainGameUE54EditorCommands::RegisterCommands()
 {
-    UI_COMMAND(PlaceNodeTool, "Place Node", "Place a rail network node", EUserInterfaceActionType::ToggleButton, FInputChord());
-    Commands.Add(NAME_Default, { PlaceNodeTool });
+    UI_COMMAND(BuildTrackTool, "Build", "Build track nodes and edges", EUserInterfaceActionType::ToggleButton, FInputChord());
+    UI_COMMAND(ModifyTrackTool, "Modify", "Select and modify nodes and edges", EUserInterfaceActionType::ToggleButton, FInputChord());
+    Commands.Add(NAME_Default, { BuildTrackTool, ModifyTrackTool });
 }
 
 #undef LOCTEXT_NAMESPACE

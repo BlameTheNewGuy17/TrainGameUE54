@@ -8,7 +8,8 @@ public:
 
     virtual void RegisterCommands() override;
 
-    TSharedPtr<FUICommandInfo> PlaceNodeTool;
+    TSharedPtr<FUICommandInfo> BuildTrackTool;
+    TSharedPtr<FUICommandInfo> ModifyTrackTool;
 
     static TMap<FName, TArray<TSharedPtr<FUICommandInfo>>> GetCommands()
     {

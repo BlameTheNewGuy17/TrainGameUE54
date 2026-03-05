@@ -26,6 +26,11 @@ void URailNetworkSubsystem::OnWorldBeginPlay(UWorld& World)
 	Super::OnWorldBeginPlay(World);
 }
 
+void URailNetworkSubsystem::ClearDebugDraw()
+{
+	FlushPersistentDebugLines(GetWorld());
+}
+
 void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness) const
 {
 	UWorld* World = GetWorld();
@@ -102,6 +107,32 @@ void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness
 			Duration,
 			0,
 			2.f);
+	}
+}
+
+void URailNetworkSubsystem::DrawWithPDI(FPrimitiveDrawInterface* PDI) const
+{
+	for (const auto& Pair : Nodes)
+	{
+		const FRailNodeData& Node = Pair.Value;
+		PDI->DrawPoint(Node.WorldPosition, FLinearColor::Yellow, 10.f, SDPG_Foreground);
+	}
+
+	for (const auto& Pair : Edges)
+	{
+		const FRailEdgeData& Edge = Pair.Value;
+		const FRailNodeData* NA = Nodes.Find(Edge.NodeA.Value);
+		const FRailNodeData* NB = Nodes.Find(Edge.NodeB.Value);
+		if (!NA || !NB) continue;
+
+		FVector Prev = NA->WorldPosition;
+		for (int32 i = 1; i <= 32; ++i)
+		{
+			const float T = (float)i / 32.f;
+			FVector Curr = RailMath::EvalHermitePos(NA->WorldPosition, Edge.TangentA, NB->WorldPosition, Edge.TangentB, T);
+			PDI->DrawLine(Prev, Curr, FLinearColor::Blue, SDPG_Foreground, 2.f);
+			Prev = Curr;
+		}
 	}
 }
 

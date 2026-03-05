@@ -27,8 +27,13 @@ public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 	// ---------- DEBUG ----------
+
+	UFUNCTION(BlueprintCallable)
+	void ClearDebugDraw();
 	UFUNCTION(BlueprintCallable)
 	void DebugDrawRailNetwork(float Duration = 0.f, float Thickness = 2.f) const;
+
+	void DrawWithPDI(FPrimitiveDrawInterface* PDI) const;
 
 	// ---------- CORE GRAPH ----------
 
