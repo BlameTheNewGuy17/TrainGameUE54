@@ -53,8 +53,19 @@ void UModifyTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
     URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
     if (!RailNetwork) return;
 
-    FRailNodeID NewNodeID = RailNetwork->CreateNode(NodePos, Properties->NodeType);
+    FRailNodeID NewNodeID = RailNetwork->CreateNode(BuildNodeTransform(NodePos, FVector(), FVector()), Properties->NodeType);
     UE_LOG(LogTemp, Warning, TEXT("Placed rail node %d at %s"), NewNodeID.Value, *NodePos.ToString());
+}
+
+FTransform UModifyTrackTool::BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir)
+{
+    FVector Forward = TangentDir.GetSafeNormal();
+    FVector Up = SurfaceNormal.GetSafeNormal();
+    // Orthonormalize
+    FVector Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
+    FVector TrueUp = FVector::CrossProduct(Forward, Right).GetSafeNormal();
+    FMatrix RotMat = FRotationMatrix::MakeFromXZ(Forward, TrueUp);
+    return FTransform(RotMat.Rotator(), Position);
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -38,4 +38,7 @@ protected:
     TObjectPtr<UModifyTrackToolProperties> Properties;
 
     UWorld* TargetWorld = nullptr;
+
+    FTransform BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir);
+
 };

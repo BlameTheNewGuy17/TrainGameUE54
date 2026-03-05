@@ -107,7 +107,7 @@ bool UBuildTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
         {
             FRailNodeData NodeData;
             RailNetwork->GetNodeData(NearestNode, NodeData);
-            CursorPos = NodeData.WorldPosition;
+            CursorPos = NodeData.Transform.GetLocation();
             bSnapping = true;
 
             if (ToolState == EBuildTrackState::Hovering)
@@ -202,17 +202,18 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
             ToolState = EBuildTrackState::Hovering;
             return;
         }
-
+        FTransform TransformA = BuildNodeTransform(CursorPos, CursorNormal, TangentA);
         FRailNodeID NodeA = SnapNodeA.IsValid()
             ? SnapNodeA
-            : RailNetwork->CreateNode(PointA, ERailNodeType::Control);
+            : RailNetwork->CreateNode(TransformA, ERailNodeType::Control);
 
+        FTransform TransformB = BuildNodeTransform(CursorPos, CursorNormal, TangentB);
         FRailNodeID NodeB = SnapNodeB.IsValid()
             ? SnapNodeB
-            : RailNetwork->CreateNode(PointB, ERailNodeType::Control);
+            : RailNetwork->CreateNode(TransformB, ERailNodeType::Control);
 
         float Dist = FVector::Distance(PointA, PointB);
-        RailNetwork->CreateEdge(NodeA, NodeB, TangentA * Dist, TangentB * Dist);
+        RailNetwork->CreateEdge(NodeA, NodeB);
 
         UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge created from node %d to node %d"),
             NodeA.Value, NodeB.Value);
@@ -268,6 +269,19 @@ void UBuildTrackTool::Render(IToolsContextRenderAPI* RenderAPI)
             Prev = Curr;
         }
     }
+}
+
+// ---- MathHelper ----
+
+FTransform UBuildTrackTool::BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir)
+{
+    FVector Forward = TangentDir.GetSafeNormal();
+    FVector Up = SurfaceNormal.GetSafeNormal();
+    // Orthonormalize
+    FVector Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
+    FVector TrueUp = FVector::CrossProduct(Forward, Right).GetSafeNormal();
+    FMatrix RotMat = FRotationMatrix::MakeFromXZ(Forward, TrueUp);
+    return FTransform(RotMat.Rotator(), Position);
 }
 
 #undef LOCTEXT_NAMESPACE

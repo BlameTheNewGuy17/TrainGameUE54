@@ -86,4 +86,5 @@ protected:
 
     bool RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos, FVector& OutNormal) const;
     FVector ComputeTangentFromRotation(const FVector& Normal) const;
+    FTransform BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir);
 };

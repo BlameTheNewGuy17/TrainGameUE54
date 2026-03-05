@@ -37,10 +37,10 @@ public:
 
 	// ---------- CORE GRAPH ----------
 
-	UFUNCTION(BlueprintCallable) FRailNodeID CreateNode(const FVector& WorldPos, ERailNodeType Type);
-	UFUNCTION(BlueprintCallable) FRailNodeID CreateSwitchNode(const FVector& WorldPos, const FSwitchNodeData& Data);
-	UFUNCTION(BlueprintCallable) FRailNodeID CreateCrossoverNode(const FVector& WorldPos, const FCrossoverNodeData& Data);
-	UFUNCTION(BlueprintCallable) FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector& TangentA, const FVector& TangentB);
+	UFUNCTION(BlueprintCallable) FRailNodeID CreateNode(const FTransform& WorldTransform, ERailNodeType Type);
+	UFUNCTION(BlueprintCallable) FRailNodeID CreateSwitchNode(const FTransform& WorldTransform, const FSwitchNodeData& Data);
+	UFUNCTION(BlueprintCallable) FRailNodeID CreateCrossoverNode(const FTransform& WorldTransform, const FCrossoverNodeData& Data);
+	UFUNCTION(BlueprintCallable) FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B);
 
 	UFUNCTION(BlueprintCallable) void SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID);
 
@@ -64,6 +64,9 @@ public:
 	*/
 	UFUNCTION(BlueprintPure)
 	FTransform GetTransformAtDistance(FRailEdgeID Edge, float S) const;
+
+	UFUNCTION(BlueprintPure)
+	FVector GetTangentForEdgeAtNode(FRailNodeID NodeID, FRailEdgeID EdgeID) const;
 
 	UFUNCTION(BlueprintPure)
 	bool FindClosestRailLocation(FVector WorldPos, FRailLocation& Out, float& OutDistSq) const;
