@@ -8,7 +8,20 @@ public class TrainGameUE54Editor : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PrivateDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "TrainGameUE54", "Slate", "SlateCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] { 
+			"Core", 
+			"CoreUObject", 
+			"Engine", 
+			"TrainGameUE54", 
+			"Slate", 
+			"SlateCore", 
+			"UnrealEd",
+			"EditorFramework",
+			"InteractiveToolsFramework",
+			"EditorInteractiveToolsFramework",
+			"InputCore",
+			"ToolMenus" 
+		});
 		
 	}
 }
