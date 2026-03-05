@@ -68,6 +68,9 @@ public:
 	UFUNCTION(BlueprintPure)
 	bool FindClosestRailLocation(FVector WorldPos, FRailLocation& Out, float& OutDistSq) const;
 
+	UFUNCTION(BlueprintPure)
+	FRailNodeID FindNearestNode(const FVector& WorldPos, float MaxDistanceCm) const;
+
 	// ---------- CONSTRAINT SOLVER ----------
 
 	UFUNCTION(BlueprintPure)

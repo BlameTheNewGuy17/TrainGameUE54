@@ -5,6 +5,7 @@
 #include "ToolContextInterfaces.h"
 #include "SceneManagement.h"
 #include "Subsystems/RailNetworkSubsystem.h"
+#include "BaseBehaviors/MouseWheelBehavior.h"
 #include "BaseBehaviors/SingleClickBehavior.h"
 #include "BaseBehaviors/MouseHoverBehavior.h"
 
@@ -40,7 +41,13 @@ void UBuildTrackTool::Setup()
     HoverBehavior->Initialize(this);
     AddInputBehavior(HoverBehavior);
 
+    // Mouse Wheel behavior
+    UMouseWheelInputBehavior* ScrollBehavior = NewObject<UMouseWheelInputBehavior>();
+    ScrollBehavior->Initialize(this);
+    AddInputBehavior(ScrollBehavior);
+
     Properties = NewObject<UBuildTrackToolProperties>(this);
+
     AddToolPropertySource(Properties);
 }
 
@@ -90,11 +97,33 @@ void UBuildTrackTool::OnBeginHover(const FInputDeviceRay& DevicePos)
 
 bool UBuildTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
 {
-    UE_LOG(LogTemp, Warning, TEXT("OnUpdateHover called"));
     RaycastToWorld(DevicePos, CursorPos, CursorNormal);
 
-    // TODO: check if cursor is near existing node for snapping
-    // SnapNodeA = FindNearestNode(CursorPos, SnapThreshold);
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (RailNetwork)
+    {
+        FRailNodeID NearestNode = RailNetwork->FindNearestNode(CursorPos, 100.f);
+        if (NearestNode.IsValid())
+        {
+            FRailNodeData NodeData;
+            RailNetwork->GetNodeData(NearestNode, NodeData);
+            CursorPos = NodeData.WorldPosition;
+            bSnapping = true;
+
+            if (ToolState == EBuildTrackState::Hovering)
+                SnapNodeA = NearestNode;
+            else
+                SnapNodeB = NearestNode;
+        }
+        else
+        {
+            bSnapping = false;
+            if (ToolState == EBuildTrackState::Hovering)
+                SnapNodeA = FRailNodeID();
+            else
+                SnapNodeB = FRailNodeID();
+        }
+    }
 
     Properties->GhostPosition = CursorPos;
     Properties->TangentRotationDeg = TangentRotationDeg;
@@ -104,6 +133,32 @@ bool UBuildTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
 void UBuildTrackTool::OnEndHover()
 {
 }
+
+
+// ---- Scroll ----
+
+FInputRayHit UBuildTrackTool::ShouldRespondToMouseWheel(const FInputDeviceRay& CurrentPos)
+{
+    
+    bool bAltHeld = FSlateApplication::Get().GetModifierKeys().IsAltDown();
+
+    return bAltHeld ? FInputRayHit(0.f) : FInputRayHit();
+}
+
+void UBuildTrackTool::OnMouseWheelScrollUp(const FInputDeviceRay& CurrentPos)
+{
+    TangentRotationDeg += 15.f;
+    if (TangentRotationDeg >= 360.f) TangentRotationDeg -= 360.f;
+    Properties->TangentRotationDeg = TangentRotationDeg;
+}
+
+void UBuildTrackTool::OnMouseWheelScrollDown(const FInputDeviceRay& CurrentPos)
+{
+    TangentRotationDeg -= 15.f;
+    if (TangentRotationDeg < 0.f) TangentRotationDeg += 360.f;
+    Properties->TangentRotationDeg = TangentRotationDeg;
+}
+
 
 // ---- Click ----
 
@@ -120,9 +175,17 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
     if (ToolState == EBuildTrackState::Hovering)
     {
         // Click 1 - store point A
-        PointA = HitPos;
-        TangentA = ComputeTangentFromRotation(HitNormal);
-        SnapNodeA = FRailNodeID(); // clear snap
+        PointA = CursorPos;
+        if (bSnapping && SnapNodeA.IsValid())
+        {
+            // TODO: inherit tangent from existing node's connected edges
+            // For now just use current rotation
+            TangentA = ComputeTangentFromRotation(CursorNormal);
+        }
+        else
+        {
+            TangentA = ComputeTangentFromRotation(CursorNormal);
+        }
         ToolState = EBuildTrackState::PlacingB;
 
         UE_LOG(LogTemp, Warning, TEXT("BuildTool: Point A set at %s, Tangent %s"),
@@ -130,9 +193,8 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
     }
     else if (ToolState == EBuildTrackState::PlacingB)
     {
-        // Click 2 - confirm edge
-        FVector PointB = HitPos;
-        FVector TangentB = ComputeTangentFromRotation(HitNormal);
+        FVector PointB = CursorPos;
+        FVector TangentB = ComputeTangentFromRotation(CursorNormal);
 
         URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
         if (!RailNetwork)
@@ -141,20 +203,23 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
             return;
         }
 
-        // Create nodes
         FRailNodeID NodeA = SnapNodeA.IsValid()
             ? SnapNodeA
             : RailNetwork->CreateNode(PointA, ERailNodeType::Control);
 
-        FRailNodeID NodeB = RailNetwork->CreateNode(PointB, ERailNodeType::Control);
+        FRailNodeID NodeB = SnapNodeB.IsValid()
+            ? SnapNodeB
+            : RailNetwork->CreateNode(PointB, ERailNodeType::Control);
 
-        // Scale tangents by distance
         float Dist = FVector::Distance(PointA, PointB);
         RailNetwork->CreateEdge(NodeA, NodeB, TangentA * Dist, TangentB * Dist);
 
         UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge created from node %d to node %d"),
             NodeA.Value, NodeB.Value);
 
+        // Reset state
+        SnapNodeA = FRailNodeID();
+        SnapNodeB = FRailNodeID();
         ToolState = EBuildTrackState::Hovering;
     }
 }
@@ -169,7 +234,8 @@ void UBuildTrackTool::Render(IToolsContextRenderAPI* RenderAPI)
     if (!PDI) return;
 
     // Draw ghost node at cursor
-    PDI->DrawPoint(CursorPos, FLinearColor::White, 12.f, SDPG_Foreground);
+    FLinearColor GhostColor = bSnapping ? FLinearColor::Green : FLinearColor::White;
+    PDI->DrawPoint(CursorPos, GhostColor, 12.f, SDPG_Foreground);
 
     // Draw tangent direction indicator
     FVector Tangent = ComputeTangentFromRotation(CursorNormal);

@@ -1,6 +1,7 @@
 #pragma once
 #include "InteractiveTool.h"
 #include "InteractiveToolBuilder.h"
+#include "BaseBehaviors/MouseWheelBehavior.h"
 #include "BaseBehaviors/SingleClickBehavior.h"
 #include "BaseBehaviors/MouseHoverBehavior.h"
 #include "RailNetworkTypes.h"
@@ -35,7 +36,7 @@ public:
 };
 
 UCLASS()
-class UBuildTrackTool : public UInteractiveTool, public IClickBehaviorTarget, public IHoverBehaviorTarget
+class UBuildTrackTool : public UInteractiveTool, public IClickBehaviorTarget, public IHoverBehaviorTarget, public IMouseWheelBehaviorTarget
 {
     GENERATED_BODY()
 public:
@@ -53,6 +54,13 @@ public:
     virtual bool OnUpdateHover(const FInputDeviceRay& DevicePos) override;
     virtual void OnEndHover() override;
 
+    // IMouseWheelBehaviorTarget
+    virtual FInputRayHit ShouldRespondToMouseWheel(const FInputDeviceRay& CurrentPos) override;
+    virtual void OnMouseWheelScrollUp(const FInputDeviceRay& CurrentPos) override;
+    virtual void OnMouseWheelScrollDown(const FInputDeviceRay& CurrentPos) override;
+
+
+
 protected:
     UPROPERTY()
     TObjectPtr<UBuildTrackToolProperties> Properties;
@@ -66,10 +74,15 @@ protected:
     FVector TangentA = FVector::ForwardVector;
     FRailNodeID SnapNodeA; // valid if snapped to existing node
 
+    // Point B (second click)
+    FRailNodeID SnapNodeB; // valid if snapped to existing node
+
     // Current cursor position (updated on hover)
     FVector CursorPos = FVector::ZeroVector;
     FVector CursorNormal = FVector::UpVector;
     float TangentRotationDeg = 0.f;
+
+    bool bSnapping = false;
 
     bool RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos, FVector& OutNormal) const;
     FVector ComputeTangentFromRotation(const FVector& Normal) const;

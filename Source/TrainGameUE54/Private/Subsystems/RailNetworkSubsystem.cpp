@@ -383,6 +383,24 @@ bool URailNetworkSubsystem::FindClosestRailLocation(FVector WorldPos, FRailLocat
 	return bFound;
 }
 
+FRailNodeID URailNetworkSubsystem::FindNearestNode(const FVector& WorldPos, float MaxDistanceCm) const
+{
+	FRailNodeID BestID;
+	float BestDistSq = FMath::Square(MaxDistanceCm);
+
+	for (const auto& Pair : Nodes)
+	{
+		const float DistSq = FVector::DistSquared(Pair.Value.WorldPosition, WorldPos);
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			BestID = Pair.Value.ID;
+		}
+	}
+
+	return BestID; // Invalid if nothing found within threshold
+}
+
 // ---------- CONSTRAINT SOLVER ----------
 
 bool URailNetworkSubsystem::GetPositionAndTangent(
@@ -816,3 +834,4 @@ void URailNetworkSubsystem::RecomputeEdgeDerived(FRailEdgeData& EdgeData)
 		FVector::Distance(NA->WorldPosition, NB->WorldPosition),
 		Length / FVector::Distance(NA->WorldPosition, NB->WorldPosition));
 }
+
