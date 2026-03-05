@@ -37,9 +37,14 @@ public:
 	UFUNCTION(BlueprintCallable) FRailNodeID CreateCrossoverNode(const FVector& WorldPos, const FCrossoverNodeData& Data);
 	UFUNCTION(BlueprintCallable) FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector& TangentA, const FVector& TangentB);
 
+	UFUNCTION(BlueprintCallable) void SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID);
+
 	UFUNCTION(BlueprintCallable) bool RemoveEdge(FRailEdgeID Edge);
 
 	UFUNCTION(BlueprintPure) bool GetNodeData(FRailNodeID Node, FRailNodeData& OutData) const;
+	UFUNCTION(BlueprintPure) bool GetSwitchData(FRailNodeID Node, FSwitchNodeData& OutData) const;
+	UFUNCTION(BlueprintPure) bool GetCrossoverData(FRailNodeID Node, FCrossoverNodeData& OutData) const;
+
 	UFUNCTION(BlueprintPure) bool GetEdgeData(FRailEdgeID Edge, FRailEdgeData& OutData) const;
 
 	UFUNCTION(BlueprintPure) float GetEdgeLength(FRailEdgeID Edge) const;
@@ -81,7 +86,7 @@ public:
 		const FRailLocation& InitialGuess,
 		const FRailMoveContext& Ctx,
 		FRailLocation& OutSolved,
-		int32 MaxNewtonIters = 4,
+		int32 MaxNewtonIters = 12,
 		float ToleranceCm = 0.5f
 	);
 

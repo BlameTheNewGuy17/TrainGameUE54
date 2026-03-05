@@ -32,6 +32,7 @@ void UTrainSimulationSubsystem::OnWorldBeginPlay(UWorld& World)
 
 	RailNetworkRef = World.GetSubsystem<URailNetworkSubsystem>(); // Store the RailNetworkSubsystem
 
+	// If we are using Chaos Physics
 	if (bUsePhysics)
 	{
 		if (FPhysScene* Scene = World.GetPhysicsScene())
@@ -68,6 +69,8 @@ void UTrainSimulationSubsystem::OnWorldBeginPlay(UWorld& World)
 			RailBodyRegistry.Add(ID, Body);
 		}
 	}
+
+	// If we are using Spline Following
 	else
 	{
 
@@ -76,6 +79,7 @@ void UTrainSimulationSubsystem::OnWorldBeginPlay(UWorld& World)
 
 void UTrainSimulationSubsystem::Tick(float DeltaTime)
 {
+	// If we are using Chaos Physics
 	if (bUsePhysics)
 	{
 		if (!RailCallback) return;
@@ -133,9 +137,16 @@ void UTrainSimulationSubsystem::Tick(float DeltaTime)
 		}
 		UE_LOG(LogTemp, Warning, TEXT("Num Bodies: %d"), Input->Bodies.Num());
 	}
+
+	// If we are using Spline Following
 	else
 	{
-
+		
+		for (auto& Pair : RollingStockStates)
+		{
+			FRollingStockID ID = Pair.Key;
+			AdvanceRollingStock(ID, DeltaTime);
+		}
 	}
 }
 
@@ -189,13 +200,14 @@ void UTrainSimulationSubsystem::DebugDrawRollingStock(float Duration, float Thic
 	}
 }
 
-FRollingStockID UTrainSimulationSubsystem::AddRollingStock(ERollingStockType Type, FRailLocation Location)
+FRollingStockID UTrainSimulationSubsystem::AddRollingStock(URollingStockDefinition* RollingStockDefinition, FRailLocation Location)
 {
 	FRollingStockID NewID;
 	NewID.Value = NextRollingStockID++;
 
 	// Set up some defaults
 	FRollingStockState State;
+	State.Definition = RollingStockDefinition;
 	State.ID = NewID;
 	State.Speed = 500;
 	State.Bogies.Add(FBogieState());
@@ -234,65 +246,58 @@ bool UTrainSimulationSubsystem::RemoveRollingStock(FRollingStockID ID)
 
 void UTrainSimulationSubsystem::AdvanceRollingStock(FRollingStockID ID, float DeltaTime)
 {
-
 	FRollingStockState* State = RollingStockStates.Find(ID);
-	if (!State || State->bSleeping || State->Bogies.Num() == 0) return;
+	if (!State || State->bSleeping || State->Bogies.Num() == 0 || !State->Definition) return;
 
+	const float DerailTol = State->Definition->DerailTolerance;
 
 	URailNetworkSubsystem* Rail = GetWorld()->GetSubsystem<URailNetworkSubsystem>();
 	if (!Rail) return;
 
 	const float DeltaS = State->Speed * DeltaTime;
 
-	// Determine lead bogie
-	const bool bAToB = (State->Direction == ERailDirection::AToB);
-	const int32 LeadIndex = 0;// bAToB ? 0 : State->Bogies.Num() - 1;
-
-	FBogieState& LeadBogie = State->Bogies[LeadIndex];
-
-
-
-	UE_LOG(LogTemp, Warning, TEXT("Num=%d Dir=%d LeadIndex=%d  S0=%f S1=%f"),
-		State->Bogies.Num(),
-		(int32)State->Direction,
-		LeadIndex,
-		State->Bogies.IsValidIndex(0) ? State->Bogies[0].Location.S : -999.f,
-		State->Bogies.IsValidIndex(1) ? State->Bogies[1].Location.S : -999.f
-	);
-
-
-	// ---- Advance lead bogie ----
-	FRailTravelResult LeadResult;
 	FRailMoveContext Ctx;
 	Ctx.bEnforceSignals = false;
 	Ctx.bUsePlannedPath = false;
 
-	LeadResult = Rail->AdvanceAlongRails(LeadBogie.Location, DeltaS, Ctx);
-	LeadBogie.Location.Edge = LeadResult.Edge;
-	LeadBogie.Location.Dir = LeadResult.Dir;
-	LeadBogie.Location.S = LeadResult.S;
-
-	// ---- Resolve trailing bogies by constraint ----
-	for (int32 i = 0; i < State->Bogies.Num(); ++i)
+	// ---- Advance ALL bogies independently ----
+	for (FBogieState& Bogie : State->Bogies)
 	{
-		
-		if (i == LeadIndex) continue;
+		FRailTravelResult Result = Rail->AdvanceAlongRails(Bogie.Location, DeltaS, Ctx);
 
-		UE_LOG(LogTemp, Warning, TEXT("Updating bogie i=%d (LeadIndex=%d)"), i, LeadIndex);
+		if (!Result.bStopped) {
+			Bogie.Location.Edge = Result.Edge;
+			Bogie.Location.Dir = Result.Dir;
+			Bogie.Location.S = Result.S;
+		}
+		// If stopped, bogie holds its current position this frame
+		// Derail validation below will catch if the other bogie keeps stretching away
+	}
 
-		FBogieState& Bogie = State->Bogies[i];
-		const float Offset = Bogie.OffsetFromCar - LeadBogie.OffsetFromCar;
+	// ---- Validate bogie separation ----
+	// For now: front vs rear bogie only. Extend to bogie pairs for articulated stock later.
+	if (State->Bogies.Num() >= 2)
+	{
+		const FBogieState& Front = State->Bogies[0];
+		const FBogieState& Rear = State->Bogies[1];
 
-		FRailTravelResult R = Rail->AdvanceAlongRails(
-			LeadBogie.Location,
-			-Offset,
-			Ctx
-		);
+		const FVector FrontPos = Rail->GetTransformAtDistance(
+			Front.Location.Edge, Front.Location.S).GetLocation();
+		const FVector RearPos = Rail->GetTransformAtDistance(
+			Rear.Location.Edge, Rear.Location.S).GetLocation();
 
-		Bogie.Location.Edge = R.Edge;
-		Bogie.Location.Dir = R.Dir;
-		Bogie.Location.S = R.S;
+		const float ActualDist = FVector::Distance(FrontPos, RearPos);
+		const float NominalDist = FMath::Abs(Front.OffsetFromCar - Rear.OffsetFromCar);
+
+
+		if (ActualDist > NominalDist * DerailTol)
+		{
+			State->bDerailed = true;
+			// TODO: broadcast derail event to RailNetwork/visuals
+			UE_LOG(LogTemp, Warning, TEXT("Derailed!"));
+			UE_LOG(LogTemp, Warning, TEXT("ActualDist=%.1f Nominal=%.1f Threshold=%.1f"),
+				ActualDist, NominalDist, NominalDist * DerailTol);
+		}
 	}
 }
-
 

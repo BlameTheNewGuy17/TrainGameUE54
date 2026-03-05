@@ -159,6 +159,14 @@ FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B, cons
 	return NewID;
 }
 
+void URailNetworkSubsystem::SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID)
+{
+	if (FSwitchNodeData* Switch = Switches.Find(NodeID.Value))
+	{
+		Switch->ActiveEdge = EdgeID;
+	}
+}
+
 bool URailNetworkSubsystem::RemoveEdge(FRailEdgeID Edge)
 {
 	FRailEdgeData* Data = Edges.Find(Edge.Value);
@@ -175,6 +183,22 @@ bool URailNetworkSubsystem::RemoveEdge(FRailEdgeID Edge)
 bool URailNetworkSubsystem::GetNodeData(FRailNodeID Node, FRailNodeData& OutData) const
 {
 	const FRailNodeData* Data = Nodes.Find(Node.Value);
+	if (!Data) return false;
+	OutData = *Data;
+	return true;
+}
+
+bool URailNetworkSubsystem::GetSwitchData(FRailNodeID Node, FSwitchNodeData& OutData) const
+{
+	const FSwitchNodeData* Data = Switches.Find(Node.Value);
+	if (!Data) return false;
+	OutData = *Data;
+	return true;
+}
+
+bool URailNetworkSubsystem::GetCrossoverData(FRailNodeID Node, FCrossoverNodeData& OutData) const
+{
+	const FCrossoverNodeData* Data = Crossovers.Find(Node.Value);
 	if (!Data) return false;
 	OutData = *Data;
 	return true;
@@ -246,7 +270,8 @@ FTransform URailNetworkSubsystem::GetTransformAtDistance(FRailEdgeID Edge, float
 
 	// Use UE helper (much more stable than manual FMatrix)
 	const FMatrix RotMat = FRotationMatrix::MakeFromXZ(Forward, TrueUp);
-
+	UE_LOG(LogTemp, Warning, TEXT("Edge %d Length=%.1f S=%.1f T=%.4f Pos=%s"),
+		Edge.Value, E->Length, S, T, *Pos.ToString());
 	return FTransform(RotMat.Rotator(), Pos);
 }
 
@@ -349,18 +374,42 @@ bool URailNetworkSubsystem::SolveTrailingForLinearDistance(
 	float ToleranceCm
 )
 {
-	const float TargetDist2 = TargetDist * TargetDist;
-	const float Tol2 = FMath::Square(ToleranceCm);
 
+	const float Tol2 = FMath::Square(ToleranceCm);
+	const float TargetDist2 = FMath::Square(TargetDist);
+
+	// Start from last frame's answer (temporal coherence)
 	FRailLocation X = InitialGuess;
+
+	// Binary search bounds: 0 offset = same point, max offset = TargetDist (straight track)
+	float Lo = 0.f;
+	float Hi = TargetDist * 1.5f; // overshoot a bit for very curved track
 
 	for (int32 i = 0; i < MaxNewtonIters; ++i)
 	{
-		
+		const float Mid = (Lo + Hi) * 0.5f;
+
+		// Sample point at this rail offset behind anchor
+		FRailTravelResult R = AdvanceAlongRails(Anchor, -Mid, Ctx);
+		FVector SamplePos = GetTransformAtDistance(R.Edge, R.S).GetLocation();
+
+		const float Dist2 = FVector::DistSquared(SamplePos, AnchorPos);
+
+		if (Dist2 < TargetDist2)
+			Lo = Mid; // too close, go further back
+		else
+			Hi = Mid; // too far, come forward
+
+		// Converged?
+		if (FMath::Abs(Dist2 - TargetDist2) < Tol2 * TargetDist * 2.f)
+			break;
 	}
 	
-	OutSolved = X;
-	return false;
+	FRailTravelResult Final = AdvanceAlongRails(Anchor, -(Lo + Hi) * 0.5f, Ctx);
+	OutSolved.Edge = Final.Edge;
+	OutSolved.Dir = Final.Dir;
+	OutSolved.S = Final.S;
+	return true;
 }
 
 
@@ -380,7 +429,12 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 	Result.Dir = Location.Dir;
 	Result.S = Location.S;
 
-	float Remaining = DeltaS;
+	float Remaining = FMath::Abs(DeltaS);
+	if (DeltaS < 0.f)
+	{
+		Result.Dir = Opposite(Location.Dir);
+	}
+
 
 	while (Remaining > KINDA_SMALL_NUMBER)
 	{
@@ -483,9 +537,10 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(
 			Result.Dir = ERailDirection::BToA;
 			Result.S = NE->Length;
 		}
+
+		// Graph inconsistency
 		else
 		{
-			// Graph inconsistency
 			Result.bStopped = true;
 			Result.StopReason = ERailStopReason::InvalidGraph;
 			return Result;
@@ -705,9 +760,28 @@ void URailNetworkSubsystem::RecomputeEdgeDerived(FRailEdgeData& EdgeData)
 		return;
 	}
 
+	// Numerical arc length integration (32 segments is plenty for Hermite curves)
+	const int32 NumSteps = 32;
+	float Length = 0.f;
+	FVector Prev = RailMath::EvalHermitePos(NA->WorldPosition, EdgeData.TangentA, NB->WorldPosition, EdgeData.TangentB, 0.f);
+	
+	for (int32 i = 1; i <= NumSteps; ++i)
+	{
+		const float T = (float)i / (float)NumSteps;
+
+		FVector Curr = RailMath::EvalHermitePos(NA->WorldPosition, EdgeData.TangentA, NB->WorldPosition, EdgeData.TangentB, T);
+		Length += FVector::Distance(Prev, Curr);
+		Prev = Curr;
+	}
+
 	// Very rough length approximation (straight-line for now)
-	EdgeData.Length = FVector::Distance(NA->WorldPosition, NB->WorldPosition);
+	EdgeData.Length = Length;
 
 	// Placeholder derived values
 	EdgeData.SpeedLimit = 1000.f;
+
+	UE_LOG(LogTemp, Warning, TEXT("Edge recomputed: Length=%.1f StraightLine=%.1f Ratio=%.3f"),
+		Length,
+		FVector::Distance(NA->WorldPosition, NB->WorldPosition),
+		Length / FVector::Distance(NA->WorldPosition, NB->WorldPosition));
 }

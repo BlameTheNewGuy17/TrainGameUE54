@@ -37,7 +37,7 @@ public:
 
 	// ---------- CORE ---------
 	UFUNCTION(BlueprintCallable)
-	FRollingStockID AddRollingStock(ERollingStockType Type, FRailLocation Location);
+	FRollingStockID AddRollingStock(URollingStockDefinition* RollingStockDefinition, FRailLocation Location);
 
 	UFUNCTION(BlueprintCallable)
 	bool RemoveRollingStock(FRollingStockID ID);
