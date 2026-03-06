@@ -169,17 +169,14 @@ FInputRayHit UBuildTrackTool::IsHitByClick(const FInputDeviceRay& ClickPos)
 
 void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
 {
-    FVector HitPos, HitNormal;
-    RaycastToWorld(ClickPos, HitPos, HitNormal);
-
+    
     if (ToolState == EBuildTrackState::Hovering)
     {
         // Click 1 - store point A
         PointA = CursorPos;
+        NormalA = CursorNormal;
         if (bSnapping && SnapNodeA.IsValid())
         {
-            // TODO: inherit tangent from existing node's connected edges
-            // For now just use current rotation
             TangentA = ComputeTangentFromRotation(CursorNormal);
         }
         else
@@ -193,7 +190,9 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
     }
     else if (ToolState == EBuildTrackState::PlacingB)
     {
+        // Click 2 - store point B
         FVector PointB = CursorPos;
+        FVector NormalB = CursorNormal;
         FVector TangentB = ComputeTangentFromRotation(CursorNormal);
 
         URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
@@ -202,18 +201,24 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
             ToolState = EBuildTrackState::Hovering;
             return;
         }
-        FTransform TransformA = BuildNodeTransform(CursorPos, CursorNormal, TangentA);
+        FTransform TransformA = BuildNodeTransform(PointA, NormalA, TangentA);
         FRailNodeID NodeA = SnapNodeA.IsValid()
             ? SnapNodeA
             : RailNetwork->CreateNode(TransformA, ERailNodeType::Control);
 
-        FTransform TransformB = BuildNodeTransform(CursorPos, CursorNormal, TangentB);
+        FTransform TransformB = BuildNodeTransform(PointB, NormalB, TangentB);
         FRailNodeID NodeB = SnapNodeB.IsValid()
             ? SnapNodeB
             : RailNetwork->CreateNode(TransformB, ERailNodeType::Control);
 
         float Dist = FVector::Distance(PointA, PointB);
         RailNetwork->CreateEdge(NodeA, NodeB);
+
+        FRailNodeData DataA, DataB;
+        RailNetwork->GetNodeData(NodeA, DataA);
+        RailNetwork->GetNodeData(NodeB, DataB);
+        UE_LOG(LogTemp, Warning, TEXT("NodeA pos: %s"), *DataA.Transform.GetLocation().ToString());
+        UE_LOG(LogTemp, Warning, TEXT("NodeB pos: %s"), *DataB.Transform.GetLocation().ToString());
 
         UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge created from node %d to node %d"),
             NodeA.Value, NodeB.Value);

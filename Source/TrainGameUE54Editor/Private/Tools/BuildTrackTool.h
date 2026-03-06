@@ -71,6 +71,7 @@ protected:
 
     // Point A (first click)
     FVector PointA = FVector::ZeroVector;
+    FVector NormalA = FVector::ZeroVector;
     FVector TangentA = FVector::ForwardVector;
     FRailNodeID SnapNodeA; // valid if snapped to existing node
 
