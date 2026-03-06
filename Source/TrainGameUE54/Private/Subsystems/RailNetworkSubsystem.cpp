@@ -193,6 +193,9 @@ FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B, cons
 	if (FRailNodeData* NA = Nodes.Find(A.Value)) NA->ConnectedEdges.Add(NewID);
 	if (FRailNodeData* NB = Nodes.Find(B.Value)) NB->ConnectedEdges.Add(NewID);
 
+	UpdateNodeType(A);
+	UpdateNodeType(B);
+
 	return NewID;
 }
 
@@ -226,6 +229,9 @@ bool URailNetworkSubsystem::RemoveEdge(FRailEdgeID Edge)
 	if (FRailNodeData* NB = Nodes.Find(Data->NodeB.Value)) NB->ConnectedEdges.Remove(Edge);
 
 	Edges.Remove(Edge.Value);
+
+	UpdateNodeType(Data->NodeA);
+	UpdateNodeType(Data->NodeB);
 	return true;
 }
 
@@ -911,5 +917,17 @@ void URailNetworkSubsystem::RecomputeEdgeLength(FRailEdgeData& EdgeData)
 	EdgeData.SpeedLimit = 1000.f;
 }
 
+void URailNetworkSubsystem::UpdateNodeType(FRailNodeID NodeID)
+{
+	FRailNodeData* Node = Nodes.Find(NodeID.Value);
+	if (!Node) return;
 
+	const int32 EdgeCount = Node->ConnectedEdges.Num();
 
+	if (EdgeCount <= 2)
+		Node->Type = ERailNodeType::Control;
+	else if (EdgeCount == 3)
+		Node->Type = ERailNodeType::Switch;
+	else
+		Node->Type = ERailNodeType::Crossover;
+}

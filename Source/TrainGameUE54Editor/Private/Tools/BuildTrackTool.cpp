@@ -93,6 +93,36 @@ bool UBuildTrackTool::RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos
     return false;
 }
 
+bool UBuildTrackTool::RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& OutNodeID) const
+{
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (!RailNetwork) return false;
+
+    const float SnapRadius = 50.f;
+    float BestDistSq = TNumericLimits<float>::Max();
+    bool bFound = false;
+
+    for (const auto& Pair : RailNetwork->GetNodes())
+    {
+        const FVector NodePos = Pair.Value.Transform.GetLocation();
+        FVector ToNode = NodePos - Ray.WorldRay.Origin;
+        float T = FVector::DotProduct(ToNode, Ray.WorldRay.Direction);
+        if (T < 0.f) continue;
+
+        FVector Closest = Ray.WorldRay.Origin + Ray.WorldRay.Direction * T;
+        float DistSq = FVector::DistSquared(Closest, NodePos);
+
+        if (DistSq < FMath::Square(SnapRadius) && DistSq < BestDistSq)
+        {
+            BestDistSq = DistSq;
+            OutNodeID = Pair.Value.ID;
+            bFound = true;
+        }
+    }
+
+    return bFound;
+}
+
 FVector UBuildTrackTool::ComputeTangentFromRotation(const FVector& Normal) const
 {
     // Start with world forward, rotate around the surface normal by TangentRotationDeg
@@ -120,7 +150,8 @@ bool UBuildTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
     URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
     if (RailNetwork)
     {
-        FRailNodeID NearestNode = RailNetwork->FindNearestNode(CursorPos, 100.f);
+        FRailNodeID NearestNode = FRailNodeID();
+        RaycastToNode(DevicePos, NearestNode);
         if (NearestNode.IsValid())
         {
             FRailNodeData NodeData;
@@ -309,5 +340,6 @@ FTransform UBuildTrackTool::BuildNodeTransform(const FVector& Position, const FV
     FMatrix RotMat = FRotationMatrix::MakeFromXZ(Forward, TrueUp);
     return FTransform(RotMat.Rotator(), Position);
 }
+
 
 #undef LOCTEXT_NAMESPACE

@@ -48,6 +48,8 @@ public:
 
 	UFUNCTION(BlueprintCallable) bool RemoveEdge(FRailEdgeID Edge);
 
+	// Header
+	const TMap<int32, FRailNodeData>& GetNodes() const { return Nodes; }
 	UFUNCTION(BlueprintPure) bool GetNodeData(FRailNodeID Node, FRailNodeData& OutData) const;
 	UFUNCTION(BlueprintPure) bool GetSwitchData(FRailNodeID Node, FSwitchNodeData& OutData) const;
 	UFUNCTION(BlueprintPure) bool GetCrossoverData(FRailNodeID Node, FCrossoverNodeData& OutData) const;
@@ -164,4 +166,5 @@ private:
 	// Internal helpers
 	void RecomputeEdgeDerived(FRailEdgeData& EdgeData);
 	void RecomputeEdgeLength(FRailEdgeData& EdgeData);
+	void UpdateNodeType(FRailNodeID NodeID);
 };

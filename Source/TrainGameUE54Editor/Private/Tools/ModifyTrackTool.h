@@ -8,6 +8,22 @@
 #include "RailNetworkTypes.h"
 #include "ModifyTrackTool.generated.h"
 
+UENUM()
+enum class ENodeDisplayState : uint8
+{
+    Default,
+    Hovered,
+    Selected
+};
+
+struct FNodeRenderState
+{
+    FRailNodeID ID;
+    FVector Position;
+    float Radius = 50.f;
+    ENodeDisplayState State = ENodeDisplayState::Default;
+};
+
 UCLASS()
 class UModifyTrackToolBuilder : public UInteractiveToolBuilder
 {
@@ -83,4 +99,11 @@ protected:
     bool bHasHover = false;
 
     static constexpr float SnapThreshold = 100.f;
+
+    // Visual draw
+    TArray<FNodeRenderState> NodeMirror;
+
+    void RebuildMirror();
+    bool RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& OutNodeID) const;
+
 };

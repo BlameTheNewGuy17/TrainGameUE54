@@ -7,8 +7,10 @@
 #include "ToolContextInterfaces.h"
 #include "BaseBehaviors/SingleClickBehavior.h"
 #include "BaseBehaviors/MouseHoverBehavior.h"
+#include "BaseBehaviors/KeyAsModifierInputBehavior.h"
 #include "Engine/World.h"
 #include "Subsystems/RailNetworkSubsystem.h"
+#include "ModifyTrackTool.h"
 
 #define LOCTEXT_NAMESPACE "UModifyTrackTool"
 
@@ -40,10 +42,10 @@ void UModifyTrackTool::Setup()
     HoverBehavior->Initialize(this);
     AddInputBehavior(HoverBehavior);
 
-   
-
     Properties = NewObject<UModifyTrackToolProperties>(this);
     AddToolPropertySource(Properties);
+
+    RebuildMirror();
 }
 
 void UModifyTrackTool::Shutdown(EToolShutdownType ShutdownType)
@@ -70,6 +72,8 @@ void UModifyTrackTool::OnTick(float DeltaTime)
                 RailNetwork->SetNodeTransform(SelectedNodeID, CurrentGizmoTransform);
                 RailNetwork->OnNodeTransformChanged(SelectedNodeID);
                 UpdatePropertiesFromNode();
+
+                RebuildMirror();
             }
         }
     }
@@ -93,6 +97,9 @@ void UModifyTrackTool::OnPropertyModified(UObject* PropertySet, FProperty* Prope
     RailNetwork->SetNodeTransform(SelectedNodeID, NodeData.Transform);
     RailNetwork->SetNodeType(SelectedNodeID, Properties->NodeType);
     RailNetwork->OnNodeTransformChanged(SelectedNodeID);
+
+
+    RebuildMirror();
 
     // Update gizmo position to match
     if (TransformProxy)
@@ -128,6 +135,7 @@ void UModifyTrackTool::SelectNode(FRailNodeID NodeID)
             RN->SetNodeTransform(SelectedNodeID, NewTransform);
             RN->OnNodeTransformChanged(SelectedNodeID);
             UpdatePropertiesFromNode();
+            RebuildMirror();
         }
     );
     TransformProxy->SetTransform(NodeData.Transform);
@@ -145,6 +153,8 @@ void UModifyTrackTool::SelectNode(FRailNodeID NodeID)
         UE_LOG(LogTemp, Error, TEXT("ModifyTool: Failed to create TransformGizmo"));
         return;
     }
+    TransformGizmo->bUseContextGizmoMode = false;
+    TransformGizmo->ActiveGizmoMode = EToolContextTransformGizmoMode::Combined;
     TransformGizmo->SetActiveTarget(TransformProxy);
     TransformGizmo->SetVisibility(true);
 
@@ -206,7 +216,9 @@ bool UModifyTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
     URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
     if (!RailNetwork) return true;
 
-    FRailNodeID Nearest = RailNetwork->FindNearestNode(HitPos, SnapThreshold);
+    FRailNodeID Nearest = FRailNodeID();
+
+    RaycastToNode(DevicePos, Nearest);
     
     if (Nearest.IsValid())
     {
@@ -243,7 +255,8 @@ void UModifyTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
     URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
     if (!RailNetwork) return;
 
-    FRailNodeID Nearest = RailNetwork->FindNearestNode(HitPos, SnapThreshold);
+    FRailNodeID Nearest = FRailNodeID();
+    RaycastToNode(ClickPos, Nearest);
     UE_LOG(LogTemp, Warning, TEXT("OnClicked nearest valid=%d"), Nearest.IsValid());
     if (Nearest.IsValid())
     {
@@ -277,5 +290,52 @@ bool UModifyTrackTool::RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPo
     OutPos = FMath::RayPlaneIntersection(Ray.WorldRay.Origin, Ray.WorldRay.Direction, GroundPlane);
     return false;
 }
+
+void UModifyTrackTool::RebuildMirror()
+{
+    NodeMirror.Reset();
+
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (!RailNetwork) return;
+
+    for (const auto& Pair : RailNetwork->GetNodes())
+    {
+        FNodeRenderState State;
+        State.ID = Pair.Value.ID;
+        State.Position = Pair.Value.Transform.GetLocation();
+        State.State = ENodeDisplayState::Default;
+        NodeMirror.Add(State);
+    }
+}
+
+bool UModifyTrackTool::RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& OutNodeID) const
+{
+    UE_LOG(LogTemp, Warning, TEXT("RaycastToNode checking %d nodes"), NodeMirror.Num());
+
+    float BestDistSq = TNumericLimits<float>::Max();
+    bool bFound = false;
+
+    for (const FNodeRenderState& Node : NodeMirror)
+    {
+        // Project node position onto ray
+        FVector ToNode = Node.Position - Ray.WorldRay.Origin;
+        float T = FVector::DotProduct(ToNode, Ray.WorldRay.Direction);
+        if (T < 0.f) continue;
+
+        FVector Closest = Ray.WorldRay.Origin + Ray.WorldRay.Direction * T;
+        float DistSq = FVector::DistSquared(Closest, Node.Position);
+        UE_LOG(LogTemp, Warning, TEXT("  Node %d at %s T=%.1f DistSq=%.1f Radius=%.1f"),
+            Node.ID.Value, *Node.Position.ToString(), T, DistSq, Node.Radius);
+        if (DistSq < FMath::Square(Node.Radius) && DistSq < BestDistSq)
+        {
+            BestDistSq = DistSq;
+            OutNodeID = Node.ID;
+            bFound = true;
+        }
+    }
+
+    return bFound;
+}
+
 
 #undef LOCTEXT_NAMESPACE
