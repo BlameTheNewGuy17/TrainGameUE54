@@ -40,7 +40,7 @@ public:
 	UFUNCTION(BlueprintCallable) FRailNodeID CreateNode(const FTransform& WorldTransform, ERailNodeType Type);
 	UFUNCTION(BlueprintCallable) FRailNodeID CreateSwitchNode(const FTransform& WorldTransform, const FSwitchNodeData& Data);
 	UFUNCTION(BlueprintCallable) FRailNodeID CreateCrossoverNode(const FTransform& WorldTransform, const FCrossoverNodeData& Data);
-	UFUNCTION(BlueprintCallable) FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B);
+	FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector* TangentA = nullptr, const FVector* TangentB = nullptr);
 
 	UFUNCTION(BlueprintCallable) void SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID);
 
@@ -67,6 +67,9 @@ public:
 
 	UFUNCTION(BlueprintPure)
 	FVector GetTangentForEdgeAtNode(FRailNodeID NodeID, FRailEdgeID EdgeID) const;
+
+	UFUNCTION(BlueprintPure)
+	FVector GetContinuationTangent(FRailNodeID NodeID, const FVector& HintDirection) const;
 
 	UFUNCTION(BlueprintPure)
 	bool FindClosestRailLocation(FVector WorldPos, FRailLocation& Out, float& OutDistSq) const;
@@ -156,4 +159,6 @@ private:
 
 	// Internal helpers
 	void RecomputeEdgeDerived(FRailEdgeData& EdgeData);
+	void RecomputeEdgeLength(FRailEdgeData& EdgeData);
+	void OnNodeTransformChanged(FRailNodeID NodeID);
 };

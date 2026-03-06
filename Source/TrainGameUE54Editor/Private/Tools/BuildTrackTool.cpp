@@ -31,11 +31,29 @@ void UBuildTrackTool::Setup()
 {
     UInteractiveTool::Setup();
 
-    // Click behavior
-    USingleClickInputBehavior* ClickBehavior = NewObject<USingleClickInputBehavior>();
-    ClickBehavior->Initialize(this);
-    AddInputBehavior(ClickBehavior);
+    // Left Click behavior
+    USingleClickInputBehavior* LeftClickBehavior = NewObject<USingleClickInputBehavior>();
+    LeftClickBehavior->Initialize(this);
+    AddInputBehavior(LeftClickBehavior);
 
+    // Right Click behavior
+    ULocalSingleClickInputBehavior* RightClickBehavior = NewObject<ULocalSingleClickInputBehavior>();
+    RightClickBehavior->Initialize();
+    RightClickBehavior->SetUseRightMouseButton();
+    RightClickBehavior->IsHitByClickFunc = [](const FInputDeviceRay& ClickPos) {
+        return FInputRayHit(0.f);
+        };
+    RightClickBehavior->OnClickedFunc = [this](const FInputDeviceRay& ClickPos) {
+        if (ToolState == EBuildTrackState::PlacingB)
+        {
+            SnapNodeA = FRailNodeID();
+            SnapNodeB = FRailNodeID();
+            ToolState = EBuildTrackState::Hovering;
+            UE_LOG(LogTemp, Warning, TEXT("BuildTool: Cancelled"));
+        }
+    };
+    AddInputBehavior(RightClickBehavior);
+    
     // Hover behavior
     UMouseHoverBehavior* HoverBehavior = NewObject<UMouseHoverBehavior>();
     HoverBehavior->Initialize(this);
@@ -169,7 +187,12 @@ FInputRayHit UBuildTrackTool::IsHitByClick(const FInputDeviceRay& ClickPos)
 
 void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
 {
-    
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (!RailNetwork)
+    {
+        ToolState = EBuildTrackState::Hovering;
+        return;
+    }
     if (ToolState == EBuildTrackState::Hovering)
     {
         // Click 1 - store point A
@@ -177,7 +200,7 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
         NormalA = CursorNormal;
         if (bSnapping && SnapNodeA.IsValid())
         {
-            TangentA = ComputeTangentFromRotation(CursorNormal);
+            TangentA = RailNetwork->GetContinuationTangent(SnapNodeA, ComputeTangentFromRotation(CursorNormal));
         }
         else
         {
@@ -193,14 +216,10 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
         // Click 2 - store point B
         FVector PointB = CursorPos;
         FVector NormalB = CursorNormal;
-        FVector TangentB = ComputeTangentFromRotation(CursorNormal);
-
-        URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
-        if (!RailNetwork)
-        {
-            ToolState = EBuildTrackState::Hovering;
-            return;
-        }
+        FVector TangentB = bSnapping && SnapNodeB.IsValid()
+            ? RailNetwork->GetContinuationTangent(SnapNodeB, ComputeTangentFromRotation(CursorNormal))
+            : ComputeTangentFromRotation(CursorNormal);
+        
         FTransform TransformA = BuildNodeTransform(PointA, NormalA, TangentA);
         FRailNodeID NodeA = SnapNodeA.IsValid()
             ? SnapNodeA
@@ -212,7 +231,9 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
             : RailNetwork->CreateNode(TransformB, ERailNodeType::Control);
 
         float Dist = FVector::Distance(PointA, PointB);
-        RailNetwork->CreateEdge(NodeA, NodeB);
+        FVector ScaledTangentA = TangentA * Dist;
+        FVector ScaledTangentB = TangentB * Dist;
+        RailNetwork->CreateEdge(NodeA, NodeB, &ScaledTangentA, &ScaledTangentB);
 
         FRailNodeData DataA, DataB;
         RailNetwork->GetNodeData(NodeA, DataA);

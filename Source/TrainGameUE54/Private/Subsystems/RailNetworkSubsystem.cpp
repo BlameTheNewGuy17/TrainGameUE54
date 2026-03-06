@@ -167,7 +167,7 @@ FRailNodeID URailNetworkSubsystem::CreateCrossoverNode(const FTransform& WorldTr
 	return NewID;
 }
 
-FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B)
+FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B, const FVector* TangentA, const FVector* TangentB)
 {
 	FRailEdgeID NewID;
 	NewID.Value = NextEdgeID++;
@@ -177,13 +177,21 @@ FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B)
 	Data.NodeA = A;
 	Data.NodeB = B;
 
-	RecomputeEdgeDerived(Data);
+	if (TangentA && TangentB)
+	{
+		Data.TangentA = *TangentA;
+		Data.TangentB = *TangentB;
+		RecomputeEdgeLength(Data);
+	}
+	else
+	{
+		RecomputeEdgeDerived(Data);
+	}
 
 	Edges.Add(NewID.Value, Data);
 
-	// Register connectivity
-	if (FRailNodeData* NA = Nodes.Find(A.Value))	NA->ConnectedEdges.Add(NewID);
-	if (FRailNodeData* NB = Nodes.Find(B.Value))	NB->ConnectedEdges.Add(NewID);
+	if (FRailNodeData* NA = Nodes.Find(A.Value)) NA->ConnectedEdges.Add(NewID);
+	if (FRailNodeData* NB = Nodes.Find(B.Value)) NB->ConnectedEdges.Add(NewID);
 
 	return NewID;
 }
@@ -327,6 +335,18 @@ FVector URailNetworkSubsystem::GetTangentForEdgeAtNode(FRailNodeID NodeID, FRail
 
 	FQuat Rot = FQuat(Up, FMath::DegreesToRadians(*Angle));
 	return Rot.RotateVector(Forward).GetSafeNormal();
+}
+
+FVector URailNetworkSubsystem::GetContinuationTangent(FRailNodeID NodeID, const FVector& HintDirection) const
+{
+	const FRailNodeData* Node = Nodes.Find(NodeID.Value);
+	if (!Node) return HintDirection;
+
+	FVector Forward = Node->Transform.GetUnitAxis(EAxis::X);
+
+	// If hint is within 90° of forward, use forward, otherwise flip
+	float Dot = FVector::DotProduct(Forward, HintDirection.GetSafeNormal());
+	return Dot >= 0.f ? Forward : -Forward;
 }
 
 bool URailNetworkSubsystem::FindClosestRailLocation(FVector WorldPos, FRailLocation& Out, float& OutDistSq) const
@@ -813,41 +833,69 @@ void URailNetworkSubsystem::RecomputeEdgeDerived(FRailEdgeData& EdgeData)
 		return;
 	}
 
-	// Get tangents from nodes
-	FVector TangentA = GetTangentForEdgeAtNode(EdgeData.NodeA, EdgeData.ID);
-	FVector TangentB = GetTangentForEdgeAtNode(EdgeData.NodeB, EdgeData.ID);
-
-	// Scale by distance
 	FVector PosA = NA->Transform.GetLocation();
 	FVector PosB = NB->Transform.GetLocation();
 	float StraightDist = FVector::Distance(PosA, PosB);
 
-	EdgeData.TangentA = TangentA * StraightDist;
-	EdgeData.TangentB = TangentB * StraightDist;
+	EdgeData.TangentA = GetTangentForEdgeAtNode(EdgeData.NodeA, EdgeData.ID) * StraightDist;
+	EdgeData.TangentB = GetTangentForEdgeAtNode(EdgeData.NodeB, EdgeData.ID) * StraightDist;
 
-	// Numerical arc length integration (32 segments is plenty for Hermite curves)
+	RecomputeEdgeLength(EdgeData);
+}
+
+void URailNetworkSubsystem::RecomputeEdgeLength(FRailEdgeData& EdgeData)
+{
+	const FRailNodeData* NA = Nodes.Find(EdgeData.NodeA.Value);
+	const FRailNodeData* NB = Nodes.Find(EdgeData.NodeB.Value);
+	if (!NA || !NB)
+	{
+		EdgeData.Length = 0.f;
+		return;
+	}
+
 	const int32 NumSteps = 32;
 	float Length = 0.f;
-	FVector Prev = RailMath::EvalHermitePos(NA->Transform.GetLocation(), EdgeData.TangentA, NB->Transform.GetLocation(), EdgeData.TangentB, 0.f);
-	
+	FVector PosA = NA->Transform.GetLocation();
+	FVector PosB = NB->Transform.GetLocation();
+	FVector Prev = RailMath::EvalHermitePos(PosA, EdgeData.TangentA, PosB, EdgeData.TangentB, 0.f);
+
 	for (int32 i = 1; i <= NumSteps; ++i)
 	{
 		const float T = (float)i / (float)NumSteps;
-
-		FVector Curr = RailMath::EvalHermitePos(NA->Transform.GetLocation(), EdgeData.TangentA, NB->Transform.GetLocation(), EdgeData.TangentB, T);
+		FVector Curr = RailMath::EvalHermitePos(PosA, EdgeData.TangentA, PosB, EdgeData.TangentB, T);
 		Length += FVector::Distance(Prev, Curr);
 		Prev = Curr;
 	}
 
-	// Very rough length approximation (straight-line for now)
 	EdgeData.Length = Length;
-
-	// Placeholder derived values
 	EdgeData.SpeedLimit = 1000.f;
+}
 
-	UE_LOG(LogTemp, Warning, TEXT("Edge recomputed: Length=%.1f StraightLine=%.1f Ratio=%.3f"),
-		Length,
-		FVector::Distance(NA->Transform.GetLocation(), NB->Transform.GetLocation()),
-		Length / FVector::Distance(NA->Transform.GetLocation(), NB->Transform.GetLocation()));
+void URailNetworkSubsystem::OnNodeTransformChanged(FRailNodeID NodeID)
+{
+	FRailNodeData* Node = Nodes.Find(NodeID.Value);
+	if (!Node) return;
+
+	for (FRailEdgeID EdgeID : Node->ConnectedEdges)
+	{
+		FRailEdgeData* Edge = Edges.Find(EdgeID.Value);
+		if (!Edge) continue;
+
+		bool bIsNodeA = Edge->NodeA.Value == NodeID.Value;
+		FRailNodeID OtherNodeID = bIsNodeA ? Edge->NodeB : Edge->NodeA;
+		FRailNodeData* OtherNode = Nodes.Find(OtherNodeID.Value);
+		if (!OtherNode) continue;
+
+		FVector HintDir = (OtherNode->Transform.GetLocation() - Node->Transform.GetLocation()).GetSafeNormal();
+		FVector NewTangent = GetContinuationTangent(NodeID, HintDir);
+		float Dist = FVector::Distance(Node->Transform.GetLocation(), OtherNode->Transform.GetLocation());
+
+		if (bIsNodeA)
+			Edge->TangentA = NewTangent * Dist;
+		else
+			Edge->TangentB = NewTangent * Dist;
+
+		RecomputeEdgeLength(*Edge);
+	}
 }
 
