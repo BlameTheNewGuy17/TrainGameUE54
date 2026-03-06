@@ -204,6 +204,18 @@ void URailNetworkSubsystem::SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID 
 	}
 }
 
+void URailNetworkSubsystem::SetNodeTransform(FRailNodeID NodeID, const FTransform& NewTransform)
+{
+	if (FRailNodeData* Node = Nodes.Find(NodeID.Value))
+		Node->Transform = NewTransform;
+}
+
+void URailNetworkSubsystem::SetNodeType(FRailNodeID NodeID, ERailNodeType NewType)
+{
+	if (FRailNodeData* Node = Nodes.Find(NodeID.Value))
+		Node->Type = NewType;
+}
+
 bool URailNetworkSubsystem::RemoveEdge(FRailEdgeID Edge)
 {
 	FRailEdgeData* Data = Edges.Find(Edge.Value);
@@ -259,6 +271,34 @@ TArray<FRailEdgeID> URailNetworkSubsystem::GetConnectedEdges(FRailNodeID Node) c
 {
 	const FRailNodeData* Data = Nodes.Find(Node.Value);
 	return Data ? Data->ConnectedEdges : TArray<FRailEdgeID>();
+}
+
+void URailNetworkSubsystem::OnNodeTransformChanged(FRailNodeID NodeID)
+{
+	FRailNodeData* Node = Nodes.Find(NodeID.Value);
+	if (!Node) return;
+
+	for (FRailEdgeID EdgeID : Node->ConnectedEdges)
+	{
+		FRailEdgeData* Edge = Edges.Find(EdgeID.Value);
+		if (!Edge) continue;
+
+		bool bIsNodeA = Edge->NodeA.Value == NodeID.Value;
+		FRailNodeID OtherNodeID = bIsNodeA ? Edge->NodeB : Edge->NodeA;
+		FRailNodeData* OtherNode = Nodes.Find(OtherNodeID.Value);
+		if (!OtherNode) continue;
+
+		FVector HintDir = bIsNodeA ? Edge->TangentA.GetSafeNormal() : Edge->TangentB.GetSafeNormal();
+		FVector NewTangent = GetContinuationTangent(NodeID, HintDir);
+		float Dist = FVector::Distance(Node->Transform.GetLocation(), OtherNode->Transform.GetLocation());
+
+		if (bIsNodeA)
+			Edge->TangentA = NewTangent * Dist;
+		else
+			Edge->TangentB = NewTangent * Dist;
+
+		RecomputeEdgeLength(*Edge);
+	}
 }
 
 // ---------- GEOMETRY ----------
@@ -871,31 +911,5 @@ void URailNetworkSubsystem::RecomputeEdgeLength(FRailEdgeData& EdgeData)
 	EdgeData.SpeedLimit = 1000.f;
 }
 
-void URailNetworkSubsystem::OnNodeTransformChanged(FRailNodeID NodeID)
-{
-	FRailNodeData* Node = Nodes.Find(NodeID.Value);
-	if (!Node) return;
 
-	for (FRailEdgeID EdgeID : Node->ConnectedEdges)
-	{
-		FRailEdgeData* Edge = Edges.Find(EdgeID.Value);
-		if (!Edge) continue;
-
-		bool bIsNodeA = Edge->NodeA.Value == NodeID.Value;
-		FRailNodeID OtherNodeID = bIsNodeA ? Edge->NodeB : Edge->NodeA;
-		FRailNodeData* OtherNode = Nodes.Find(OtherNodeID.Value);
-		if (!OtherNode) continue;
-
-		FVector HintDir = (OtherNode->Transform.GetLocation() - Node->Transform.GetLocation()).GetSafeNormal();
-		FVector NewTangent = GetContinuationTangent(NodeID, HintDir);
-		float Dist = FVector::Distance(Node->Transform.GetLocation(), OtherNode->Transform.GetLocation());
-
-		if (bIsNodeA)
-			Edge->TangentA = NewTangent * Dist;
-		else
-			Edge->TangentB = NewTangent * Dist;
-
-		RecomputeEdgeLength(*Edge);
-	}
-}
 

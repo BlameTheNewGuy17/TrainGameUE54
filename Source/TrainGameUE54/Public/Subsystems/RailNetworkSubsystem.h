@@ -43,6 +43,8 @@ public:
 	FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector* TangentA = nullptr, const FVector* TangentB = nullptr);
 
 	UFUNCTION(BlueprintCallable) void SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID);
+	void SetNodeTransform(FRailNodeID NodeID, const FTransform& NewTransform);
+	void SetNodeType(FRailNodeID NodeID, ERailNodeType NewType);
 
 	UFUNCTION(BlueprintCallable) bool RemoveEdge(FRailEdgeID Edge);
 
@@ -54,6 +56,8 @@ public:
 
 	UFUNCTION(BlueprintPure) float GetEdgeLength(FRailEdgeID Edge) const;
 	UFUNCTION(BlueprintPure) TArray<FRailEdgeID> GetConnectedEdges(FRailNodeID Node) const;
+
+	void OnNodeTransformChanged(FRailNodeID NodeID);
 
 	// ---------- GEOMETRY (MOST IMPORTANT API) ----------
 
@@ -160,5 +164,4 @@ private:
 	// Internal helpers
 	void RecomputeEdgeDerived(FRailEdgeData& EdgeData);
 	void RecomputeEdgeLength(FRailEdgeData& EdgeData);
-	void OnNodeTransformChanged(FRailNodeID NodeID);
 };

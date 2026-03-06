@@ -1,11 +1,18 @@
-#include "ModifyTrackTool.h"
+#include "Tools/ModifyTrackTool.h"
 #include "InteractiveToolManager.h"
+#include "BaseGizmos/TransformGizmoUtil.h"
 #include "Engine/HitResult.h"
 #include "Engine/World.h"
+#include "SceneManagement.h"
 #include "ToolContextInterfaces.h"
+#include "BaseBehaviors/SingleClickBehavior.h"
+#include "BaseBehaviors/MouseHoverBehavior.h"
+#include "Engine/World.h"
 #include "Subsystems/RailNetworkSubsystem.h"
 
 #define LOCTEXT_NAMESPACE "UModifyTrackTool"
+
+// ---- Builder ----
 
 UInteractiveTool* UModifyTrackToolBuilder::BuildTool(const FToolBuilderState& SceneState) const
 {
@@ -14,6 +21,8 @@ UInteractiveTool* UModifyTrackToolBuilder::BuildTool(const FToolBuilderState& Sc
     return NewTool;
 }
 
+// ---- Tool ----
+
 void UModifyTrackTool::SetWorld(UWorld* World)
 {
     TargetWorld = World;
@@ -21,51 +30,252 @@ void UModifyTrackTool::SetWorld(UWorld* World)
 
 void UModifyTrackTool::Setup()
 {
-    USingleClickTool::Setup();
+    UInteractiveTool::Setup();
+
+    USingleClickInputBehavior* ClickBehavior = NewObject<USingleClickInputBehavior>();
+    ClickBehavior->Initialize(this);
+    AddInputBehavior(ClickBehavior);
+
+    UMouseHoverBehavior* HoverBehavior = NewObject<UMouseHoverBehavior>();
+    HoverBehavior->Initialize(this);
+    AddInputBehavior(HoverBehavior);
+
+   
+
     Properties = NewObject<UModifyTrackToolProperties>(this);
     AddToolPropertySource(Properties);
 }
 
-void UModifyTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
+void UModifyTrackTool::Shutdown(EToolShutdownType ShutdownType)
 {
-    if (!TargetWorld) return;
+    DeselectNode();
+    UInteractiveTool::Shutdown(ShutdownType);
+}
 
-    // Raycast into world to find click position
-    FVector RayStart = ClickPos.WorldRay.Origin;
-    FVector RayEnd = ClickPos.WorldRay.PointAt(999999);
-    FCollisionObjectQueryParams QueryParams(FCollisionObjectQueryParams::AllObjects);
-    FHitResult HitResult;
-
-    FVector NodePos;
-    bool bHit = TargetWorld->LineTraceSingleByObjectType(HitResult, RayStart, RayEnd, QueryParams);
-    if (bHit)
+void UModifyTrackTool::OnTick(float DeltaTime)
+{
+    if (TransformGizmo && TransformProxy && bHasSelection)
     {
-        NodePos = HitResult.ImpactPoint + FVector(0, 0, Properties->SnapToGroundOffset);
-    }
-    else
-    {
-        // Fall back to ground plane at Z=0
-        FPlane GroundPlane(FVector(0, 0, 0), FVector(0, 0, 1));
-        NodePos = FMath::RayPlaneIntersection(ClickPos.WorldRay.Origin, ClickPos.WorldRay.Direction, GroundPlane);
-    }
+        // Check if gizmo moved the transform
+        FTransform CurrentGizmoTransform = TransformProxy->GetTransform();
 
-    // Place node in RailNetworkSubsystem
+        URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+        if (!RailNetwork) return;
+
+        FRailNodeData NodeData;
+        if (RailNetwork->GetNodeData(SelectedNodeID, NodeData))
+        {
+            if (!CurrentGizmoTransform.Equals(NodeData.Transform, 0.1f))
+            {
+                RailNetwork->SetNodeTransform(SelectedNodeID, CurrentGizmoTransform);
+                RailNetwork->OnNodeTransformChanged(SelectedNodeID);
+                UpdatePropertiesFromNode();
+            }
+        }
+    }
+}
+
+void UModifyTrackTool::OnPropertyModified(UObject* PropertySet, FProperty* Property)
+{
+    if (!bHasSelection) return;
+
     URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
     if (!RailNetwork) return;
 
-    FRailNodeID NewNodeID = RailNetwork->CreateNode(BuildNodeTransform(NodePos, FVector(), FVector()), Properties->NodeType);
-    UE_LOG(LogTemp, Warning, TEXT("Placed rail node %d at %s"), NewNodeID.Value, *NodePos.ToString());
+    FRailNodeData NodeData;
+    if (!RailNetwork->GetNodeData(SelectedNodeID, NodeData)) return;
+
+    // Apply property panel changes back to node
+    NodeData.Transform.SetLocation(Properties->Position);
+    NodeData.Transform.SetRotation(Properties->Orientation.Quaternion());
+    NodeData.Type = Properties->NodeType;
+
+    RailNetwork->SetNodeTransform(SelectedNodeID, NodeData.Transform);
+    RailNetwork->SetNodeType(SelectedNodeID, Properties->NodeType);
+    RailNetwork->OnNodeTransformChanged(SelectedNodeID);
+
+    // Update gizmo position to match
+    if (TransformProxy)
+    {
+        TransformProxy->SetTransform(NodeData.Transform);
+    }
 }
 
-FTransform UModifyTrackTool::BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir)
+// ---- Selection ----
+
+void UModifyTrackTool::SelectNode(FRailNodeID NodeID)
 {
-    FVector Forward = TangentDir.GetSafeNormal();
-    FVector Up = SurfaceNormal.GetSafeNormal();
-    // Orthonormalize
-    FVector Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
-    FVector TrueUp = FVector::CrossProduct(Forward, Right).GetSafeNormal();
-    FMatrix RotMat = FRotationMatrix::MakeFromXZ(Forward, TrueUp);
-    return FTransform(RotMat.Rotator(), Position);
+    UE_LOG(LogTemp, Warning, TEXT("SelectNode called with ID=%d"), NodeID.Value);
+
+    DeselectNode();
+
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (!RailNetwork) return;
+
+    FRailNodeData NodeData;
+    if (!RailNetwork->GetNodeData(NodeID, NodeData)) return;
+
+    SelectedNodeID = NodeID;
+    bHasSelection = true;
+
+    // Create transform proxy with custom get/set
+    TransformProxy = NewObject<UTransformProxy>(this);
+    TransformProxy->OnTransformChanged.AddLambda(
+        [this](UTransformProxy*, FTransform NewTransform)
+        {
+            URailNetworkSubsystem* RN = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+            if (!RN) return;
+            RN->SetNodeTransform(SelectedNodeID, NewTransform);
+            RN->OnNodeTransformChanged(SelectedNodeID);
+            UpdatePropertiesFromNode();
+        }
+    );
+    TransformProxy->SetTransform(NodeData.Transform);
+
+    // Create gizmo
+    TransformGizmo = UE::TransformGizmoUtil::CreateCustomTransformGizmo(
+        GetToolManager()->GetPairedGizmoManager(),
+        ETransformGizmoSubElements::TranslateAllAxes |
+        ETransformGizmoSubElements::TranslateAllPlanes |
+        ETransformGizmoSubElements::RotateAllAxes,
+        this
+    );
+    if (!TransformGizmo)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ModifyTool: Failed to create TransformGizmo"));
+        return;
+    }
+    TransformGizmo->SetActiveTarget(TransformProxy);
+    TransformGizmo->SetVisibility(true);
+
+    UpdatePropertiesFromNode();
+}
+
+void UModifyTrackTool::DeselectNode()
+{
+    if (TransformGizmo)
+    {
+        GetToolManager()->GetPairedGizmoManager()->DestroyGizmo(TransformGizmo);
+        TransformGizmo = nullptr;
+    }
+
+    TransformProxy = nullptr;
+    SelectedNodeID = FRailNodeID();
+    bHasSelection = false;
+
+    // Clear properties panel
+    Properties->NodeID = -1;
+    Properties->Position = FVector::ZeroVector;
+    Properties->Orientation = FRotator::ZeroRotator;
+    Properties->ConnectedEdgeCount = 0;
+}
+
+void UModifyTrackTool::UpdatePropertiesFromNode()
+{
+    if (!bHasSelection) return;
+
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (!RailNetwork) return;
+
+    FRailNodeData NodeData;
+    if (!RailNetwork->GetNodeData(SelectedNodeID, NodeData)) return;
+
+    Properties->NodeID = SelectedNodeID.Value;
+    Properties->Position = NodeData.Transform.GetLocation();
+    Properties->Orientation = NodeData.Transform.GetRotation().Rotator();
+    Properties->NodeType = NodeData.Type;
+    Properties->ConnectedEdgeCount = NodeData.ConnectedEdges.Num();
+}
+
+// ---- Hover ----
+
+FInputRayHit UModifyTrackTool::BeginHoverSequenceHitTest(const FInputDeviceRay& PressPos)
+{
+    return FInputRayHit(0.f);
+}
+
+void UModifyTrackTool::OnBeginHover(const FInputDeviceRay& DevicePos)
+{
+}
+
+bool UModifyTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
+{
+    FVector HitPos;
+    if (!RaycastToWorld(DevicePos, HitPos)) return true;
+
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (!RailNetwork) return true;
+
+    FRailNodeID Nearest = RailNetwork->FindNearestNode(HitPos, SnapThreshold);
+    
+    if (Nearest.IsValid())
+    {
+        HoveredNodeID = Nearest;
+        bHasHover = true;
+    }
+    else
+    {
+        HoveredNodeID = FRailNodeID();
+        bHasHover = false;
+    }
+
+    return true;
+}
+
+void UModifyTrackTool::OnEndHover()
+{
+    HoveredNodeID = FRailNodeID();
+    bHasHover = false;
+}
+
+// ---- Click ----
+
+FInputRayHit UModifyTrackTool::IsHitByClick(const FInputDeviceRay& ClickPos)
+{
+    return FInputRayHit(0.f);
+}
+
+void UModifyTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
+{
+    FVector HitPos;
+    RaycastToWorld(ClickPos, HitPos);
+
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (!RailNetwork) return;
+
+    FRailNodeID Nearest = RailNetwork->FindNearestNode(HitPos, SnapThreshold);
+    UE_LOG(LogTemp, Warning, TEXT("OnClicked nearest valid=%d"), Nearest.IsValid());
+    if (Nearest.IsValid())
+    {
+        SelectNode(Nearest);
+    }
+    else
+    {
+        DeselectNode();
+    }
+}
+
+// ---- Raycast ----
+
+bool UModifyTrackTool::RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos) const
+{
+    FCollisionObjectQueryParams QueryParams(FCollisionObjectQueryParams::AllObjects);
+    FHitResult HitResult;
+    bool bHit = TargetWorld->LineTraceSingleByObjectType(
+        HitResult,
+        Ray.WorldRay.Origin,
+        Ray.WorldRay.PointAt(999999),
+        QueryParams);
+
+    if (bHit)
+    {
+        OutPos = HitResult.ImpactPoint;
+        return true;
+    }
+
+    FPlane GroundPlane(FVector::ZeroVector, FVector::UpVector);
+    OutPos = FMath::RayPlaneIntersection(Ray.WorldRay.Origin, Ray.WorldRay.Direction, GroundPlane);
+    return false;
 }
 
 #undef LOCTEXT_NAMESPACE

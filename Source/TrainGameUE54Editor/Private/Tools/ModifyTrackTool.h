@@ -1,5 +1,10 @@
 #pragma once
-#include "BaseTools/SingleClickTool.h"
+#include "InteractiveTool.h"
+#include "InteractiveToolBuilder.h"
+#include "BaseBehaviors/SingleClickBehavior.h"
+#include "BaseBehaviors/MouseHoverBehavior.h"
+#include "BaseGizmos/CombinedTransformGizmo.h"
+#include "BaseGizmos/TransformProxy.h"
 #include "RailNetworkTypes.h"
 #include "ModifyTrackTool.generated.h"
 
@@ -17,28 +22,65 @@ class UModifyTrackToolProperties : public UInteractiveToolPropertySet
 {
     GENERATED_BODY()
 public:
-    UPROPERTY(EditAnywhere, Category = Options)
+    UPROPERTY(VisibleAnywhere, Category = "Selected Node")
+    int32 NodeID = -1;
+
+    UPROPERTY(EditAnywhere, Category = "Selected Node")
+    FVector Position = FVector::ZeroVector;
+
+    UPROPERTY(EditAnywhere, Category = "Selected Node")
+    FRotator Orientation = FRotator::ZeroRotator;
+
+    UPROPERTY(EditAnywhere, Category = "Selected Node")
     ERailNodeType NodeType = ERailNodeType::Control;
 
-    UPROPERTY(EditAnywhere, Category = Options)
-    float SnapToGroundOffset = 0.f;
+    UPROPERTY(VisibleAnywhere, Category = "Selected Node")
+    int32 ConnectedEdgeCount = 0;
 };
 
 UCLASS()
-class UModifyTrackTool : public USingleClickTool
+class UModifyTrackTool : public UInteractiveTool, public IClickBehaviorTarget, public IHoverBehaviorTarget
 {
     GENERATED_BODY()
 public:
     virtual void SetWorld(UWorld* World);
     virtual void Setup() override;
+    virtual void Shutdown(EToolShutdownType ShutdownType) override;
+    virtual void OnTick(float DeltaTime) override;
+    virtual void OnPropertyModified(UObject* PropertySet, FProperty* Property) override;
+
+    // IClickBehaviorTarget
+    virtual FInputRayHit IsHitByClick(const FInputDeviceRay& ClickPos) override;
     virtual void OnClicked(const FInputDeviceRay& ClickPos) override;
 
+    // IHoverBehaviorTarget
+    virtual FInputRayHit BeginHoverSequenceHitTest(const FInputDeviceRay& PressPos) override;
+    virtual void OnBeginHover(const FInputDeviceRay& DevicePos) override;
+    virtual bool OnUpdateHover(const FInputDeviceRay& DevicePos) override;
+    virtual void OnEndHover() override;
+
 protected:
+    void SelectNode(FRailNodeID NodeID);
+    void DeselectNode();
+    void UpdatePropertiesFromNode();
+    bool RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos) const;
+
     UPROPERTY()
     TObjectPtr<UModifyTrackToolProperties> Properties;
 
+    UPROPERTY()
+    TObjectPtr<UTransformProxy> TransformProxy;
+
+    UPROPERTY()
+    TObjectPtr<UCombinedTransformGizmo> TransformGizmo;
+
     UWorld* TargetWorld = nullptr;
 
-    FTransform BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir);
+    FRailNodeID SelectedNodeID;
+    FRailNodeID HoveredNodeID;
 
+    bool bHasSelection = false;
+    bool bHasHover = false;
+
+    static constexpr float SnapThreshold = 100.f;
 };

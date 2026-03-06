@@ -14,6 +14,7 @@ public:
     virtual ~UTrainGameUE54EditorMode();
 
     virtual void Enter() override;
+    virtual void Exit() override;
     virtual void CreateToolkit() override;
     virtual TMap<FName, TArray<TSharedPtr<FUICommandInfo>>> GetModeCommands() const override;
     virtual void ActorSelectionChangeNotify() override;

@@ -1,10 +1,12 @@
 #include "TrainGameUE54EditorMode.h"
 #include "TrainGameUE54EditorToolkit.h"
 #include "TrainGameUE54EditorCommands.h"
-#include "Tools/PlaceNodeTool.h"
 #include "Tools/BuildTrackTool.h"
 #include "Tools/ModifyTrackTool.h"
 #include "InteractiveToolManager.h"
+#include "BaseGizmos/TransformGizmoUtil.h"
+#include "EdModeInteractiveToolsContext.h"
+#include "InteractiveToolsContext.h"
 #include "Engine/World.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Subsystems/RailNetworkSubsystem.h"
@@ -47,14 +49,23 @@ void UTrainGameUE54EditorMode::ModeTick(float DeltaTime)
 void UTrainGameUE54EditorMode::Enter()
 {
     UEdMode::Enter();
+
+    // Register gizmo context object so transform gizmos work
+    UE::TransformGizmoUtil::RegisterTransformGizmoContextObject(
+        Cast<UInteractiveToolsContext>(GetInteractiveToolsContext()));
     // Tools are registered here
 
     const FTrainGameUE54EditorCommands& Commands = FTrainGameUE54EditorCommands::Get();
-
     RegisterTool(Commands.BuildTrackTool, TEXT("BuildTrackTool"), NewObject<UBuildTrackToolBuilder>(this));
     RegisterTool(Commands.ModifyTrackTool, TEXT("ModifyTrackTool"), NewObject<UModifyTrackToolBuilder>(this));
-
     GetToolManager()->SelectActiveToolType(EToolSide::Left, TEXT("BuildTrackTool"));
+}
+
+void UTrainGameUE54EditorMode::Exit()
+{
+    UE::TransformGizmoUtil::DeregisterTransformGizmoContextObject(
+        Cast<UInteractiveToolsContext>(GetInteractiveToolsContext()));
+    UEdMode::Exit();
 }
 
 void UTrainGameUE54EditorMode::CreateToolkit()
