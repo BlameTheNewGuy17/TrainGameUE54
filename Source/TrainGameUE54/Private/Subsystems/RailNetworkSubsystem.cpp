@@ -169,14 +169,37 @@ FRailNodeID URailNetworkSubsystem::CreateCrossoverNode(const FTransform& WorldTr
 
 FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B, const FVector* TangentA, const FVector* TangentB)
 {
+	// Validate topology before creating anything
+	FRailNodeData* NA = Nodes.Find(A.Value);
+	FRailNodeData* NB = Nodes.Find(B.Value);
+	if (!NA || !NB)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CreateEdge: Invalid node ID(s)"));
+		return FRailEdgeID();
+	}
+
+	const FVector PosA = NA->Transform.GetLocation();
+	const FVector PosB = NB->Transform.GetLocation();
+	const FVector TangentADir = TangentA ? TangentA->GetSafeNormal() : (PosB - PosA).GetSafeNormal();
+	const FVector TangentBDir = TangentB ? TangentB->GetSafeNormal() : (PosA - PosB).GetSafeNormal();
+
+	if (!CanAddEdgeToNode(A, TangentADir))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CreateEdge: Node %d cannot accept another edge (topology limit)"), A.Value);
+		return FRailEdgeID();
+	}
+	if (!CanAddEdgeToNode(B, TangentBDir))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CreateEdge: Node %d cannot accept another edge (topology limit)"), B.Value);
+		return FRailEdgeID();
+	}
+
 	FRailEdgeID NewID;
 	NewID.Value = NextEdgeID++;
-
 	FRailEdgeData Data;
 	Data.ID = NewID;
 	Data.NodeA = A;
 	Data.NodeB = B;
-
 	if (TangentA && TangentB)
 	{
 		Data.TangentA = *TangentA;
@@ -187,15 +210,11 @@ FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B, cons
 	{
 		RecomputeEdgeDerived(Data);
 	}
-
 	Edges.Add(NewID.Value, Data);
-
-	if (FRailNodeData* NA = Nodes.Find(A.Value)) NA->ConnectedEdges.Add(NewID);
-	if (FRailNodeData* NB = Nodes.Find(B.Value)) NB->ConnectedEdges.Add(NewID);
-
+	NA->ConnectedEdges.Add(NewID);
+	NB->ConnectedEdges.Add(NewID);
 	UpdateNodeType(A);
 	UpdateNodeType(B);
-
 	return NewID;
 }
 
@@ -217,6 +236,141 @@ void URailNetworkSubsystem::SetNodeType(FRailNodeID NodeID, ERailNodeType NewTyp
 {
 	if (FRailNodeData* Node = Nodes.Find(NodeID.Value))
 		Node->Type = NewType;
+}
+
+bool URailNetworkSubsystem::CanAddEdgeToNode(FRailNodeID NodeID, const FVector& IncomingTangentWorld) const
+{
+	const FRailNodeData* Node = Nodes.Find(NodeID.Value);
+	if (!Node) return false;
+
+	const int32 EdgeCount = Node->ConnectedEdges.Num();
+
+	// Control nodes: always accept up to 2 edges, auto-upgrade handled by UpdateNodeType
+	if (EdgeCount < 2) return true;
+
+	const FVector NodeForward = Node->Transform.GetUnitAxis(EAxis::X);
+	const FVector IncomingDir = IncomingTangentWorld.GetSafeNormal();
+
+	// Classify each existing edge tangent relative to node forward
+	// Dot > cos(45°) ≈ 0.707 means "same family", we check against node forward axis
+	// An edge is on the "positive side" if dot(edgeTangent, NodeForward) >= 0
+
+	// --- Gather existing edge tangents at this node ---
+	struct FEdgeAngleInfo
+	{
+		FVector  Tangent;   // pointing away from this node
+		float    AngleDeg;  // 0-180 angle from NodeForward (absolute)
+		bool     bPositive; // dot(Tangent, NodeForward) >= 0
+	};
+
+	TArray<FEdgeAngleInfo> EdgeInfos;
+	for (FRailEdgeID EdgeID : Node->ConnectedEdges)
+	{
+		const FRailEdgeData* Edge = Edges.Find(EdgeID.Value);
+		if (!Edge) continue;
+
+		// Get the tangent leaving this node along this edge
+		FVector EdgeTangent = GetTangentForEdgeAtNode(NodeID, EdgeID);
+		float Dot = FVector::DotProduct(EdgeTangent, NodeForward);
+		float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f)));
+
+		EdgeInfos.Add({ EdgeTangent, AngleDeg, Dot >= 0.f });
+	}
+
+	// Classify the incoming tangent
+	float IncomingDot = FVector::DotProduct(IncomingDir, NodeForward);
+	float IncomingAngleDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(IncomingDot, -1.f, 1.f)));
+	bool bIncomingPositive = IncomingDot >= 0.f;
+
+	// Is the incoming tangent within 45° of all existing tangents (or their 180° flips)?
+	// i.e. would this still be a Switch-type node?
+	bool bIsSwitchAngle = true;
+	for (const FEdgeAngleInfo& Info : EdgeInfos)
+	{
+		float Diff = FMath::Abs(IncomingAngleDeg - Info.AngleDeg);
+		// Also check against the flipped version (180 - angle)
+		float DiffFlipped = FMath::Abs(IncomingAngleDeg - (180.f - Info.AngleDeg));
+		if (Diff > 45.f && DiffFlipped > 45.f)
+		{
+			bIsSwitchAngle = false;
+			break;
+		}
+	}
+
+	if (bIsSwitchAngle)
+	{
+		// --- Switch rules ---
+		if (EdgeCount >= 6) return false;
+
+		// Count edges on each side
+		int32 PositiveCount = 0, NegativeCount = 0;
+		for (const FEdgeAngleInfo& Info : EdgeInfos)
+		{
+			if (Info.bPositive) PositiveCount++;
+			else NegativeCount++;
+		}
+
+		// Reject if the relevant side is already full
+		if (bIncomingPositive && PositiveCount >= 3) return false;
+		if (!bIncomingPositive && NegativeCount >= 3) return false;
+
+		return true;
+	}
+	else
+	{
+		// --- Crossover rules ---
+		if (EdgeCount >= 8) return false;
+
+		// Cluster existing edges into angle families (within 22.5° of each other)
+		struct FAngleFamily
+		{
+			float RepAngleDeg;
+			int32 Count;
+		};
+		TArray<FAngleFamily> Families;
+
+		for (const FEdgeAngleInfo& Info : EdgeInfos)
+		{
+			bool bFoundFamily = false;
+			for (FAngleFamily& Family : Families)
+			{
+				if (FMath::Abs(Info.AngleDeg - Family.RepAngleDeg) <= 22.5f)
+				{
+					Family.Count++;
+					bFoundFamily = true;
+					break;
+				}
+			}
+			if (!bFoundFamily)
+			{
+				Families.Add({ Info.AngleDeg, 1 });
+			}
+		}
+
+		// Check if incoming belongs to an existing family
+		FAngleFamily* MatchingFamily = nullptr;
+		for (FAngleFamily& Family : Families)
+		{
+			if (FMath::Abs(IncomingAngleDeg - Family.RepAngleDeg) <= 22.5f)
+			{
+				MatchingFamily = &Family;
+				break;
+			}
+		}
+
+		if (MatchingFamily)
+		{
+			// Adding to existing family — enforce max 2 per family
+			if (MatchingFamily->Count >= 2) return false;
+			return true;
+		}
+		else
+		{
+			// New angle family — enforce max 4 families
+			if (Families.Num() >= 4) return false;
+			return true;
+		}
+	}
 }
 
 bool URailNetworkSubsystem::RemoveEdge(FRailEdgeID Edge)
@@ -925,6 +1079,7 @@ void URailNetworkSubsystem::UpdateNodeType(FRailNodeID NodeID)
 	const int32 EdgeCount = Node->ConnectedEdges.Num();
 
 	if (EdgeCount <= 2)
+	
 		Node->Type = ERailNodeType::Control;
 	else if (EdgeCount == 3)
 		Node->Type = ERailNodeType::Switch;

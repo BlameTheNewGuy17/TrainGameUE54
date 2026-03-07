@@ -46,6 +46,10 @@ public:
 	void SetNodeTransform(FRailNodeID NodeID, const FTransform& NewTransform);
 	void SetNodeType(FRailNodeID NodeID, ERailNodeType NewType);
 
+	// Returns true if a new edge with the given world-space tangent can be added to this node.
+    // Enforces Switch (max 6, max 3/side) and Crossover (max 8, max 4 angle families, max 2/family) rules.
+	bool CanAddEdgeToNode(FRailNodeID NodeID, const FVector& IncomingTangentWorld) const;
+
 	UFUNCTION(BlueprintCallable) bool RemoveEdge(FRailEdgeID Edge);
 
 	// Header
