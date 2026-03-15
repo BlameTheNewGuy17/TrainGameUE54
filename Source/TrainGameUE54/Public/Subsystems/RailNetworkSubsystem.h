@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "RailNetworkTypes.h"
+#include "NetworkGraph.h"
 #include "RailNetworkSubsystem.generated.h"
 
 /*
@@ -20,6 +21,7 @@ UCLASS(BlueprintType)
 class TRAINGAMEUE54_API URailNetworkSubsystem : public UWorldSubsystem
 {
 	GENERATED_BODY()
+
 
 public:
 
@@ -42,7 +44,10 @@ public:
 	UFUNCTION(BlueprintCallable) FRailNodeID CreateCrossoverNode(const FTransform& WorldTransform, const FCrossoverNodeData& Data);
 	FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector* TangentA = nullptr, const FVector* TangentB = nullptr);
 
-	UFUNCTION(BlueprintCallable) void SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID);
+	UFUNCTION(BlueprintCallable) 
+	void SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID);
+	
+	FTransform GetNodeTransform(FRailNodeID NodeID) const;
 	void SetNodeTransform(FRailNodeID NodeID, const FTransform& NewTransform);
 	void SetNodeType(FRailNodeID NodeID, ERailNodeType NewType);
 
@@ -162,8 +167,8 @@ private:
 	UPROPERTY(Transient) TMap<int32, int32> EdgeToBlock;
 
 	// ID generators
-	int32 NextNodeID = 1;
-	int32 NextEdgeID = 1;
+	// int32 NextNodeID = 1; -- Owned by graph now
+	// int32 NextEdgeID = 1; -- Owned by graph now
 	int32 NextBlockID = 1;
 	int32 NextSignalID = 1;
 
@@ -171,4 +176,7 @@ private:
 	void RecomputeEdgeDerived(FRailEdgeData& EdgeData);
 	void RecomputeEdgeLength(FRailEdgeData& EdgeData);
 	void UpdateNodeType(FRailNodeID NodeID);
+
+	// THE Graph. Storage, IDs, etc.
+	FNetworkGraph Graph;
 };

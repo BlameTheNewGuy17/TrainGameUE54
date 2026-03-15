@@ -19,6 +19,7 @@ class FNetworkGraph
 public:
 	int32 AddNode(const FTransform& Transform);
     const FNodeData* GetNodeData(int32 NodeID) const;
+    void SetNodeTransform(int32 NodeID, const FTransform& NewTransform);
     bool RemoveNode(const int32 NodeID);
 
     int32 AddEdge(int32 A, int32 B);

@@ -42,7 +42,7 @@ void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness
 
 		DrawDebugSphere(
 			World,
-			Node.Transform.GetLocation(),
+			Graph.GetNodeData(Node.ID.Value)->Transform.GetLocation(),
 			20.f,
 			12,
 			FColor::Yellow,
@@ -63,15 +63,15 @@ void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness
 		const FRailNodeData* NB = Nodes.Find(Edge.NodeB.Value);
 		if (!NA || !NB) continue;
 
-		FVector PrevPos = NA->Transform.GetLocation();
+		FVector PrevPos = Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation();
 
 		for (int32 i = 1; i <= NumSegments; ++i)
 		{
 			const float T = (float)i / (float)NumSegments;
 
 			const FVector Pos = RailMath::EvalHermitePos(
-				NA->Transform.GetLocation(), Edge.TangentA,
-				NB->Transform.GetLocation(), Edge.TangentB,
+				Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation(), Edge.TangentA,
+				Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation(), Edge.TangentB,
 				T);
 
 			DrawDebugLine(
@@ -90,8 +90,8 @@ void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness
 		// ---- Optional: draw tangents at endpoints ----
 		DrawDebugLine(
 			World,
-			NA->Transform.GetLocation(),
-			NA->Transform.GetLocation() + Edge.TangentA,
+			Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation(),
+			Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation() + Edge.TangentA,
 			FColor::Green,
 			false,
 			Duration,
@@ -100,8 +100,8 @@ void URailNetworkSubsystem::DebugDrawRailNetwork(float Duration, float Thickness
 
 		DrawDebugLine(
 			World,
-			NB->Transform.GetLocation(),
-			NB->Transform.GetLocation() + Edge.TangentB,
+			Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation(),
+			Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation() + Edge.TangentB,
 			FColor::Red,
 			false,
 			Duration,
@@ -115,7 +115,7 @@ void URailNetworkSubsystem::DrawWithPDI(FPrimitiveDrawInterface* PDI) const
 	for (const auto& Pair : Nodes)
 	{
 		const FRailNodeData& Node = Pair.Value;
-		PDI->DrawPoint(Node.Transform.GetLocation(), FLinearColor::Yellow, 10.f, SDPG_Foreground);
+		PDI->DrawPoint(Graph.GetNodeData(Node.ID.Value)->Transform.GetLocation(), FLinearColor::Yellow, 10.f, SDPG_Foreground);
 	}
 
 	for (const auto& Pair : Edges)
@@ -125,11 +125,11 @@ void URailNetworkSubsystem::DrawWithPDI(FPrimitiveDrawInterface* PDI) const
 		const FRailNodeData* NB = Nodes.Find(Edge.NodeB.Value);
 		if (!NA || !NB) continue;
 
-		FVector Prev = NA->Transform.GetLocation();
+		FVector Prev = Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation();
 		for (int32 i = 1; i <= 32; ++i)
 		{
 			const float T = (float)i / 32.f;
-			FVector Curr = RailMath::EvalHermitePos(NA->Transform.GetLocation(), Edge.TangentA, NB->Transform.GetLocation(), Edge.TangentB, T);
+			FVector Curr = RailMath::EvalHermitePos(Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation(), Edge.TangentA, Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation(), Edge.TangentB, T);
 			PDI->DrawLine(Prev, Curr, FLinearColor::Blue, SDPG_Foreground, 2.f);
 			Prev = Curr;
 		}
@@ -142,11 +142,10 @@ FRailNodeID URailNetworkSubsystem::CreateNode(const FTransform& WorldTransform, 
 		TEXT("CreateNode used for non-control node. Please use alternative functions."));
 
 	FRailNodeID NewID;
-	NewID.Value = NextNodeID++;
+	NewID.Value = Graph.AddNode(WorldTransform);
 
 	FRailNodeData Node;
 	Node.ID = NewID;
-	Node.Transform = WorldTransform;
 	Node.Type = Type;
 
 	Nodes.Add(NewID.Value, Node);
@@ -178,8 +177,8 @@ FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B, cons
 		return FRailEdgeID();
 	}
 
-	const FVector PosA = NA->Transform.GetLocation();
-	const FVector PosB = NB->Transform.GetLocation();
+	const FVector PosA = Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation();
+	const FVector PosB = Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation();
 	const FVector TangentADir = TangentA ? TangentA->GetSafeNormal() : (PosB - PosA).GetSafeNormal();
 	const FVector TangentBDir = TangentB ? TangentB->GetSafeNormal() : (PosA - PosB).GetSafeNormal();
 
@@ -195,7 +194,7 @@ FRailEdgeID URailNetworkSubsystem::CreateEdge(FRailNodeID A, FRailNodeID B, cons
 	}
 
 	FRailEdgeID NewID;
-	NewID.Value = NextEdgeID++;
+	NewID.Value = Graph.AddEdge(NA->ID.Value, NB->ID.Value);
 	FRailEdgeData Data;
 	Data.ID = NewID;
 	Data.NodeA = A;
@@ -226,10 +225,16 @@ void URailNetworkSubsystem::SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID 
 	}
 }
 
+FTransform URailNetworkSubsystem::GetNodeTransform(FRailNodeID NodeID) const
+{
+	const FNodeData* Data = Graph.GetNodeData(NodeID.Value);
+	return Data ? Data->Transform : FTransform::Identity;
+}
+
 void URailNetworkSubsystem::SetNodeTransform(FRailNodeID NodeID, const FTransform& NewTransform)
 {
 	if (FRailNodeData* Node = Nodes.Find(NodeID.Value))
-		Node->Transform = NewTransform;
+		Graph.SetNodeTransform(NodeID.Value, NewTransform);
 }
 
 void URailNetworkSubsystem::SetNodeType(FRailNodeID NodeID, ERailNodeType NewType)
@@ -248,7 +253,7 @@ bool URailNetworkSubsystem::CanAddEdgeToNode(FRailNodeID NodeID, const FVector& 
 	// Control nodes: always accept up to 2 edges, auto-upgrade handled by UpdateNodeType
 	if (EdgeCount < 2) return true;
 
-	const FVector NodeForward = Node->Transform.GetUnitAxis(EAxis::X);
+	const FVector NodeForward = Graph.GetNodeData(Node->ID.Value)->Transform.GetUnitAxis(EAxis::X);
 	const FVector IncomingDir = IncomingTangentWorld.GetSafeNormal();
 
 	// Classify each existing edge tangent relative to node forward
@@ -450,7 +455,7 @@ void URailNetworkSubsystem::OnNodeTransformChanged(FRailNodeID NodeID)
 
 		FVector HintDir = bIsNodeA ? Edge->TangentA.GetSafeNormal() : Edge->TangentB.GetSafeNormal();
 		FVector NewTangent = GetContinuationTangent(NodeID, HintDir);
-		float Dist = FVector::Distance(Node->Transform.GetLocation(), OtherNode->Transform.GetLocation());
+		float Dist = FVector::Distance(Graph.GetNodeData(Node->ID.Value)->Transform.GetLocation(), Graph.GetNodeData(OtherNode->ID.Value)->Transform.GetLocation());
 
 		if (bIsNodeA)
 			Edge->TangentA = NewTangent * Dist;
@@ -478,13 +483,13 @@ FTransform URailNetworkSubsystem::GetTransformAtDistance(FRailEdgeID Edge, float
 
 	// Hermite evaluation (authoritative)
 	const FVector Pos = RailMath::EvalHermitePos(
-		NA->Transform.GetLocation(), E->TangentA,
-		NB->Transform.GetLocation(), E->TangentB,
+		Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation(), E->TangentA,
+		Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation(), E->TangentB,
 		T);
 
 	FVector Tangent = RailMath::EvalHermiteTangent(
-		NA->Transform.GetLocation(), E->TangentA,
-		NB->Transform.GetLocation(), E->TangentB,
+		Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation(), E->TangentA,
+		Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation(), E->TangentB,
 		T);
 
 	Tangent = Tangent.GetSafeNormal();
@@ -517,8 +522,8 @@ FVector URailNetworkSubsystem::GetTangentForEdgeAtNode(FRailNodeID NodeID, FRail
 	const FRailNodeData* Node = Nodes.Find(NodeID.Value);
 	if (!Node) return FVector::ForwardVector;
 
-	const FVector Forward = Node->Transform.GetUnitAxis(EAxis::X);
-	const FVector Up = Node->Transform.GetUnitAxis(EAxis::Z);
+	const FVector Forward = Graph.GetNodeData(Node->ID.Value)->Transform.GetUnitAxis(EAxis::X);
+	const FVector Up = Graph.GetNodeData(Node->ID.Value)->Transform.GetUnitAxis(EAxis::Z);
 
 	// Control and Switch nodes - all edges share BaseTangent
 	if (Node->Type != ERailNodeType::Crossover)
@@ -542,7 +547,7 @@ FVector URailNetworkSubsystem::GetContinuationTangent(FRailNodeID NodeID, const 
 	const FRailNodeData* Node = Nodes.Find(NodeID.Value);
 	if (!Node) return HintDirection;
 
-	FVector Forward = Node->Transform.GetUnitAxis(EAxis::X);
+	FVector Forward = Graph.GetNodeData(Node->ID.Value)->Transform.GetUnitAxis(EAxis::X);
 
 	// If hint is within 90° of forward, use forward, otherwise flip
 	float Dot = FVector::DotProduct(Forward, HintDirection.GetSafeNormal());
@@ -633,7 +638,7 @@ FRailNodeID URailNetworkSubsystem::FindNearestNode(const FVector& WorldPos, floa
 
 	for (const auto& Pair : Nodes)
 	{
-		const float DistSq = FVector::DistSquared(Pair.Value.Transform.GetLocation(), WorldPos);
+		const float DistSq = FVector::DistSquared(Graph.GetNodeData(Pair.Value.ID.Value)->Transform.GetLocation(), WorldPos);
 		if (DistSq < BestDistSq)
 		{
 			BestDistSq = DistSq;
@@ -671,7 +676,7 @@ bool URailNetworkSubsystem::SolveTrailingForLinearDistance(	const FRailLocation&
 
 		// Sample point at this rail offset behind anchor
 		FRailTravelResult R = AdvanceAlongRails(Anchor, -Mid, Ctx);
-		FVector SamplePos = GetTransformAtDistance(R.Edge, R.S).GetLocation();
+		FVector SamplePos = GetTransformAtDistance(R.RailLoc.Edge, R.RailLoc.S).GetLocation();
 
 		const float Dist2 = FVector::DistSquared(SamplePos, AnchorPos);
 
@@ -686,9 +691,7 @@ bool URailNetworkSubsystem::SolveTrailingForLinearDistance(	const FRailLocation&
 	}
 	
 	FRailTravelResult Final = AdvanceAlongRails(Anchor, -(Lo + Hi) * 0.5f, Ctx);
-	OutSolved.Edge = Final.Edge;
-	OutSolved.Dir = Final.Dir;
-	OutSolved.S = Final.S;
+	OutSolved = Final.RailLoc;
 	return true;
 }
 
@@ -702,20 +705,18 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(	FRailLocation Locati
 {
 
 	FRailTravelResult Result;
-	Result.Edge = Location.Edge;
-	Result.Dir = Location.Dir;
-	Result.S = Location.S;
+	Result.RailLoc = Location;
 
 	float Remaining = FMath::Abs(DeltaS);
 	if (DeltaS < 0.f)
 	{
-		Result.Dir = Opposite(Location.Dir);
+		Result.RailLoc.Dir = Opposite(Location.Dir);
 	}
 
 
 	while (Remaining > KINDA_SMALL_NUMBER)
 	{
-		const FRailEdgeData* E = Edges.Find(Result.Edge.Value);
+		const FRailEdgeData* E = Edges.Find(Result.RailLoc.Edge.Value);
 		if (!E)
 		{
 			Result.bStopped = true;
@@ -727,14 +728,14 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(	FRailLocation Locati
 
 		// Distance available before hitting an endpoint
 		float DistToEnd =
-			(Result.Dir == ERailDirection::AToB)
-			? (Length - Result.S)
-			: (Result.S);
+			(Result.RailLoc.Dir == ERailDirection::AToB)
+			? (Length - Result.RailLoc.S)
+			: (Result.RailLoc.S);
 
 		// Case 1: we stay on this edge
 		if (Remaining < DistToEnd)
 		{
-			Result.S += (Result.Dir == ERailDirection::AToB) ? Remaining : -Remaining;
+			Result.RailLoc.S += (Result.RailLoc.Dir == ERailDirection::AToB) ? Remaining : -Remaining;
 			return Result;
 		}
 
@@ -748,11 +749,11 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(	FRailLocation Locati
 		
 
 		// Snap exactly to the endpoint
-		Result.S = (Result.Dir == ERailDirection::AToB) ? Length : 0.f;
+		Result.RailLoc.S = (Result.RailLoc.Dir == ERailDirection::AToB) ? Length : 0.f;
 
 		// Determine arrival node
 		FRailNodeID ArriveNode =
-			(Result.Dir == ERailDirection::AToB)
+			(Result.RailLoc.Dir == ERailDirection::AToB)
 			? E->NodeB
 			: E->NodeA;
 
@@ -761,16 +762,16 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(	FRailLocation Locati
 		UE_LOG(LogTemp, Warning,
 			TEXT("[Advance] Hit node %d on Edge %d | DistToEnd=%.3f Remaining=%.3f Dir=%d"),
 			ArriveNode.Value,
-			Result.Edge.Value,
+			Result.RailLoc.Edge.Value,
 			DistToEnd,
 			Remaining,
-			(int32)Result.Dir);
+			(int32)Result.RailLoc.Dir);
 
 		// Choose next edge
 		FRailEdgeID NextEdge = SelectNextEdge(
 			ArriveNode,
-			Result.Edge,
-			Result.Dir,
+			Result.RailLoc.Edge,
+			Result.RailLoc.Dir,
 			Ctx);
 	
 
@@ -801,18 +802,18 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(	FRailLocation Locati
 		
 
 		// IMPORTANT: commit edge change immediately
-		Result.Edge = NextEdge;
+		Result.RailLoc.Edge = NextEdge;
 
 		// Determine new direction on that edge
 		if (NE->NodeA.Value == ArriveNode.Value)
 		{
-			Result.Dir = ERailDirection::AToB;
-			Result.S = 0.f;
+			Result.RailLoc.Dir = ERailDirection::AToB;
+			Result.RailLoc.S = 0.f;
 		}
 		else if (NE->NodeB.Value == ArriveNode.Value)
 		{
-			Result.Dir = ERailDirection::BToA;
-			Result.S = NE->Length;
+			Result.RailLoc.Dir = ERailDirection::BToA;
+			Result.RailLoc.S = NE->Length;
 		}
 
 		// Graph inconsistency
@@ -824,9 +825,9 @@ FRailTravelResult URailNetworkSubsystem::AdvanceAlongRails(	FRailLocation Locati
 		}
 		UE_LOG(LogTemp, Warning,
 			TEXT("[Advance] Enter Edge %d at s=%.3f Dir=%d (Len=%.3f)"),
-			Result.Edge.Value,
-			Result.S,
-			(int32)Result.Dir,
+			Result.RailLoc.Edge.Value,
+			Result.RailLoc.S,
+			(int32)Result.RailLoc.Dir,
 			NE->Length);
 	}
 
@@ -1033,8 +1034,8 @@ void URailNetworkSubsystem::RecomputeEdgeDerived(FRailEdgeData& EdgeData)
 		return;
 	}
 
-	FVector PosA = NA->Transform.GetLocation();
-	FVector PosB = NB->Transform.GetLocation();
+	FVector PosA = Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation();
+	FVector PosB = Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation();
 	float StraightDist = FVector::Distance(PosA, PosB);
 
 	EdgeData.TangentA = GetTangentForEdgeAtNode(EdgeData.NodeA, EdgeData.ID) * StraightDist;
@@ -1055,8 +1056,8 @@ void URailNetworkSubsystem::RecomputeEdgeLength(FRailEdgeData& EdgeData)
 
 	const int32 NumSteps = 32;
 	float Length = 0.f;
-	FVector PosA = NA->Transform.GetLocation();
-	FVector PosB = NB->Transform.GetLocation();
+	FVector PosA = Graph.GetNodeData(NA->ID.Value)->Transform.GetLocation();
+	FVector PosB = Graph.GetNodeData(NB->ID.Value)->Transform.GetLocation();
 	FVector Prev = RailMath::EvalHermitePos(PosA, EdgeData.TangentA, PosB, EdgeData.TangentB, 0.f);
 
 	for (int32 i = 1; i <= NumSteps; ++i)

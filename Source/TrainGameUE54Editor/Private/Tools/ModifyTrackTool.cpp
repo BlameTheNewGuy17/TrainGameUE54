@@ -67,7 +67,7 @@ void UModifyTrackTool::OnTick(float DeltaTime)
         FRailNodeData NodeData;
         if (RailNetwork->GetNodeData(SelectedNodeID, NodeData))
         {
-            if (!CurrentGizmoTransform.Equals(NodeData.Transform, 0.1f))
+            if (!CurrentGizmoTransform.Equals(RailNetwork->GetNodeTransform(NodeData.ID), 0.1f))
             {
                 RailNetwork->SetNodeTransform(SelectedNodeID, CurrentGizmoTransform);
                 RailNetwork->OnNodeTransformChanged(SelectedNodeID);
@@ -90,11 +90,11 @@ void UModifyTrackTool::OnPropertyModified(UObject* PropertySet, FProperty* Prope
     if (!RailNetwork->GetNodeData(SelectedNodeID, NodeData)) return;
 
     // Apply property panel changes back to node
-    NodeData.Transform.SetLocation(Properties->Position);
-    NodeData.Transform.SetRotation(Properties->Orientation.Quaternion());
+    RailNetwork->GetNodeTransform(NodeData.ID).SetLocation(Properties->Position);
+    RailNetwork->GetNodeTransform(NodeData.ID).SetRotation(Properties->Orientation.Quaternion());
     NodeData.Type = Properties->NodeType;
 
-    RailNetwork->SetNodeTransform(SelectedNodeID, NodeData.Transform);
+    RailNetwork->SetNodeTransform(SelectedNodeID, RailNetwork->GetNodeTransform(NodeData.ID));
     RailNetwork->SetNodeType(SelectedNodeID, Properties->NodeType);
     RailNetwork->OnNodeTransformChanged(SelectedNodeID);
 
@@ -104,7 +104,7 @@ void UModifyTrackTool::OnPropertyModified(UObject* PropertySet, FProperty* Prope
     // Update gizmo position to match
     if (TransformProxy)
     {
-        TransformProxy->SetTransform(NodeData.Transform);
+        TransformProxy->SetTransform(RailNetwork->GetNodeTransform(NodeData.ID));
     }
 }
 
@@ -138,7 +138,7 @@ void UModifyTrackTool::SelectNode(FRailNodeID NodeID)
             RebuildMirror();
         }
     );
-    TransformProxy->SetTransform(NodeData.Transform);
+    TransformProxy->SetTransform(RailNetwork->GetNodeTransform(NodeData.ID));
 
     // Create gizmo
     TransformGizmo = UE::TransformGizmoUtil::CreateCustomTransformGizmo(
@@ -191,8 +191,8 @@ void UModifyTrackTool::UpdatePropertiesFromNode()
     if (!RailNetwork->GetNodeData(SelectedNodeID, NodeData)) return;
 
     Properties->NodeID = SelectedNodeID.Value;
-    Properties->Position = NodeData.Transform.GetLocation();
-    Properties->Orientation = NodeData.Transform.GetRotation().Rotator();
+    Properties->Position = RailNetwork->GetNodeTransform(NodeData.ID).GetLocation();
+    Properties->Orientation = RailNetwork->GetNodeTransform(NodeData.ID).GetRotation().Rotator();
     Properties->NodeType = NodeData.Type;
     Properties->ConnectedEdgeCount = NodeData.ConnectedEdges.Num();
 }
@@ -302,7 +302,7 @@ void UModifyTrackTool::RebuildMirror()
     {
         FNodeRenderState State;
         State.ID = Pair.Value.ID;
-        State.Position = Pair.Value.Transform.GetLocation();
+        State.Position = RailNetwork->GetNodeTransform(FRailNodeID{Pair.Key}).GetLocation();
         State.State = ENodeDisplayState::Default;
         NodeMirror.Add(State);
     }

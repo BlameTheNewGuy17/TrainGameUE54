@@ -266,9 +266,7 @@ void UTrainSimulationSubsystem::AdvanceRollingStock(FRollingStockID ID, float De
 		FRailTravelResult Result = Rail->AdvanceAlongRails(Bogie.Location, DeltaS, Ctx);
 
 		if (!Result.bStopped) {
-			Bogie.Location.Edge = Result.Edge;
-			Bogie.Location.Dir = Result.Dir;
-			Bogie.Location.S = Result.S;
+			Bogie.Location = Result.RailLoc;
 		}
 		// If stopped, bogie holds its current position this frame
 		// Derail validation below will catch if the other bogie keeps stretching away

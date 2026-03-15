@@ -1,4 +1,5 @@
 #include "NetworkGraph.h"
+#include "NetworkGraph.h"
 
 int32 FNetworkGraph::AddNode(const FTransform& Transform)
 {
@@ -12,6 +13,14 @@ int32 FNetworkGraph::AddNode(const FTransform& Transform)
 const FNodeData* FNetworkGraph::GetNodeData(int32 NodeID) const
 {
     return Nodes.Find(NodeID);
+}
+
+void FNetworkGraph::SetNodeTransform(int32 NodeID, const FTransform& NewTransform)
+{
+    if (FNodeData* Node = Nodes.Find(NodeID))
+    {
+        Node->Transform = NewTransform;
+    }
 }
 
 bool FNetworkGraph::RemoveNode(const int32 NodeID)

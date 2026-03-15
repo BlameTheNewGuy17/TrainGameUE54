@@ -104,7 +104,7 @@ bool UBuildTrackTool::RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& Out
 
     for (const auto& Pair : RailNetwork->GetNodes())
     {
-        const FVector NodePos = Pair.Value.Transform.GetLocation();
+        const FVector NodePos = RailNetwork->GetNodeTransform(FRailNodeID{ Pair.Key }).GetLocation();
         FVector ToNode = NodePos - Ray.WorldRay.Origin;
         float T = FVector::DotProduct(ToNode, Ray.WorldRay.Direction);
         if (T < 0.f) continue;
@@ -156,7 +156,7 @@ bool UBuildTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
         {
             FRailNodeData NodeData;
             RailNetwork->GetNodeData(NearestNode, NodeData);
-            CursorPos = NodeData.Transform.GetLocation();
+            CursorPos = RailNetwork->GetNodeTransform(NodeData.ID).GetLocation();
             bSnapping = true;
 
             if (ToolState == EBuildTrackState::Hovering)
@@ -269,8 +269,8 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
         FRailNodeData DataA, DataB;
         RailNetwork->GetNodeData(NodeA, DataA);
         RailNetwork->GetNodeData(NodeB, DataB);
-        UE_LOG(LogTemp, Warning, TEXT("NodeA pos: %s"), *DataA.Transform.GetLocation().ToString());
-        UE_LOG(LogTemp, Warning, TEXT("NodeB pos: %s"), *DataB.Transform.GetLocation().ToString());
+        UE_LOG(LogTemp, Warning, TEXT("NodeA pos: %s"), *RailNetwork->GetNodeTransform(DataA.ID).GetLocation().ToString());
+        UE_LOG(LogTemp, Warning, TEXT("NodeB pos: %s"), *RailNetwork->GetNodeTransform(DataB.ID).GetLocation().ToString());
 
         UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge created from node %d to node %d"),
             NodeA.Value, NodeB.Value);
