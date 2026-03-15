@@ -25,7 +25,7 @@ public:
     const FEdgeData* GetEdgeData(const int32 EdgeID) const;
     bool RemoveEdge(const int32 EdgeID);
 
-    TArray<int32> FindPath(int32 IDFrom, int32 IDTo, TFunction<bool(int32)> Filter = nullptr, TFunction<float(int32)> Cost = nullptr);
+    TArray<int32> FindPath(int32 IDFrom, int32 IDTo, TFunction<bool(int32)> Filter = nullptr, TFunction<float(int32)> Cost = nullptr, TFunction<float(int32)> Heuristic = nullptr);
 
 private:
     TMap<int32, FNodeData> Nodes;

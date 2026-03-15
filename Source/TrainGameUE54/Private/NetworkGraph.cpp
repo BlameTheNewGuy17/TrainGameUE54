@@ -63,7 +63,7 @@ bool FNetworkGraph::RemoveEdge(const int32 EdgeID)
     return true;
 }
 
-TArray<int32> FNetworkGraph::FindPath(int32 IDFrom, int32 IDTo, TFunction<bool(int32)> Filter, TFunction<float(int32)> Cost)
+TArray<int32> FNetworkGraph::FindPath(int32 IDFrom, int32 IDTo, TFunction<bool(int32)> Filter, TFunction<float(int32)> Cost, TFunction<float(int32)> Heuristic)
 {
     TMap<int32, float> CostSoFar;
     TMap<int32, int32> CameFromNode;
@@ -118,7 +118,10 @@ TArray<int32> FNetworkGraph::FindPath(int32 IDFrom, int32 IDTo, TFunction<bool(i
                 CostSoFar.Add(Neighbor, NewCost);
                 CameFromNode.Add(Neighbor, CurrentNode);
                 CameFromEdge.Add(Neighbor, EdgeID);
-                Open.Add({ NewCost, Neighbor });
+
+                // A* adds heuristic to priority, Dijkstra just uses cost
+                float Priority = NewCost + (Heuristic ? Heuristic(Neighbor) : 0.f);
+                Open.Add({ Priority, Neighbor });
             }
         }
     }
