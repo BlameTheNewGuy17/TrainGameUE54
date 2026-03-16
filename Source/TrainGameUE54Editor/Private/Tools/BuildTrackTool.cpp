@@ -226,56 +226,89 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
     }
     if (ToolState == EBuildTrackState::Hovering)
     {
-        // Click 1 - store point A
         PointA = CursorPos;
         NormalA = CursorNormal;
         if (bSnapping && SnapNodeA.IsValid())
         {
-            TangentA = RailNetwork->GetContinuationTangent(SnapNodeA, ComputeTangentFromRotation(CursorNormal));
+            TArray<FRailEdgeID> Existing = RailNetwork->GetConnectedEdges(SnapNodeA);
+            if (Existing.Num() == 1)
+                TangentA = -RailNetwork->GetTangentForEdgeAtNode(SnapNodeA, Existing[0]);
+            else
+                TangentA = ComputeTangentFromRotation(CursorNormal); // was GetContinuationTangent
         }
         else
         {
             TangentA = ComputeTangentFromRotation(CursorNormal);
         }
         ToolState = EBuildTrackState::PlacingB;
-
         UE_LOG(LogTemp, Warning, TEXT("BuildTool: Point A set at %s, Tangent %s"),
             *PointA.ToString(), *TangentA.ToString());
     }
     else if (ToolState == EBuildTrackState::PlacingB)
     {
-        // Click 2 - store point B
         FVector PointB = CursorPos;
         FVector NormalB = CursorNormal;
-        FVector TangentB = bSnapping && SnapNodeB.IsValid()
-            ? RailNetwork->GetContinuationTangent(SnapNodeB, ComputeTangentFromRotation(CursorNormal))
-            : ComputeTangentFromRotation(CursorNormal);
-        
+        FVector TangentB = FVector::ForwardVector;
+        if (bSnapping && SnapNodeB.IsValid())
+        {
+            TArray<FRailEdgeID> Existing = RailNetwork->GetConnectedEdges(SnapNodeB);
+            if (Existing.Num() == 1)
+                TangentB = -RailNetwork->GetTangentForEdgeAtNode(SnapNodeB, Existing[0]);
+            else
+                TangentB = ComputeTangentFromRotation(CursorNormal); // was GetContinuationTangent
+        }
+        else
+        {
+            TangentB = ComputeTangentFromRotation(CursorNormal);
+        }
         FTransform TransformA = BuildNodeTransform(PointA, NormalA, TangentA);
+
+        // Before creating any nodes, validate topology
+        FVector TangentADir = TangentA.GetSafeNormal();
+        FVector TangentBDir = TangentB.GetSafeNormal();
+
+        if (SnapNodeA.IsValid() || SnapNodeB.IsValid())
+        {
+            // Only need to check existing nodes, new nodes always accept their first edge
+            if (SnapNodeA.IsValid() && !RailNetwork->CanAddEdgeToNode(SnapNodeA, TangentADir))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("BuildTool: Node A rejected the edge"));
+                SnapNodeA = FRailNodeID();
+                SnapNodeB = FRailNodeID();
+                ToolState = EBuildTrackState::Hovering;
+                return;
+            }
+            if (SnapNodeB.IsValid() && !RailNetwork->CanAddEdgeToNode(SnapNodeB, TangentBDir))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("BuildTool: Node B rejected the edge"));
+                SnapNodeA = FRailNodeID();
+                SnapNodeB = FRailNodeID();
+                ToolState = EBuildTrackState::Hovering;
+                return;
+            }
+        }
+
+        // Now safe to create nodes
+       
+
         FRailNodeID NodeA = SnapNodeA.IsValid()
             ? SnapNodeA
             : RailNetwork->CreateNode(TransformA, ERailNodeType::Control);
-
         FTransform TransformB = BuildNodeTransform(PointB, NormalB, TangentB);
         FRailNodeID NodeB = SnapNodeB.IsValid()
             ? SnapNodeB
             : RailNetwork->CreateNode(TransformB, ERailNodeType::Control);
-
         float Dist = FVector::Distance(PointA, PointB);
         FVector ScaledTangentA = TangentA * Dist;
         FVector ScaledTangentB = TangentB * Dist;
         RailNetwork->CreateEdge(NodeA, NodeB, &ScaledTangentA, &ScaledTangentB);
-
         FRailNodeData DataA, DataB;
         RailNetwork->GetNodeData(NodeA, DataA);
         RailNetwork->GetNodeData(NodeB, DataB);
         UE_LOG(LogTemp, Warning, TEXT("NodeA pos: %s"), *RailNetwork->GetNodeTransform(DataA.ID).GetLocation().ToString());
         UE_LOG(LogTemp, Warning, TEXT("NodeB pos: %s"), *RailNetwork->GetNodeTransform(DataB.ID).GetLocation().ToString());
-
         UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge created from node %d to node %d"),
             NodeA.Value, NodeB.Value);
-
-        // Reset state
         SnapNodeA = FRailNodeID();
         SnapNodeB = FRailNodeID();
         ToolState = EBuildTrackState::Hovering;

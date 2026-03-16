@@ -250,8 +250,19 @@ bool URailNetworkSubsystem::CanAddEdgeToNode(FRailNodeID NodeID, const FVector& 
 
 	const int32 EdgeCount = Node->ConnectedEdges.Num();
 
-	// Control nodes: always accept up to 2 edges, auto-upgrade handled by UpdateNodeType
-	if (EdgeCount < 2) return true;
+	if (EdgeCount == 0) return true;
+
+	if (EdgeCount == 1)
+	{
+		// Second edge must oppose the first — no V shapes
+		FVector ExistingTangent = GetTangentForEdgeAtNode(NodeID, Node->ConnectedEdges[0]);
+		if (FVector::DotProduct(IncomingTangentWorld.GetSafeNormal(), ExistingTangent.GetSafeNormal()) >= 0.f)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("CanAddEdgeToNode: Second edge must oppose the first (no V shapes)"));
+			return false;
+		}
+		return true;
+	}
 
 	const FVector NodeForward = Graph.GetNodeData(Node->ID.Value)->Transform.GetUnitAxis(EAxis::X);
 	const FVector IncomingDir = IncomingTangentWorld.GetSafeNormal();
@@ -286,6 +297,11 @@ bool URailNetworkSubsystem::CanAddEdgeToNode(FRailNodeID NodeID, const FVector& 
 	float IncomingDot = FVector::DotProduct(IncomingDir, NodeForward);
 	float IncomingAngleDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(IncomingDot, -1.f, 1.f)));
 	bool bIncomingPositive = IncomingDot >= 0.f;
+
+
+	UE_LOG(LogTemp, Warning, TEXT("CanAddEdgeToNode: Node %d EdgeCount=%d Type=%d IncomingAngle=%.1f"),
+		NodeID.Value, EdgeCount, (int32)Node->Type, IncomingAngleDeg);
+
 
 	// Is the incoming tangent within 45° of all existing tangents (or their 180° flips)?
 	// i.e. would this still be a Switch-type node?
@@ -383,14 +399,18 @@ bool URailNetworkSubsystem::RemoveEdge(FRailEdgeID Edge)
 	FRailEdgeData* Data = Edges.Find(Edge.Value);
 	if (!Data) return false;
 
-	// Remove from nodes
-	if (FRailNodeData* NA = Nodes.Find(Data->NodeA.Value)) NA->ConnectedEdges.Remove(Edge);
-	if (FRailNodeData* NB = Nodes.Find(Data->NodeB.Value)) NB->ConnectedEdges.Remove(Edge);
+	FRailNodeID NodeA = Data->NodeA;
+	FRailNodeID NodeB = Data->NodeB;
+
+	if (FRailNodeData* NA = Nodes.Find(NodeA.Value)) NA->ConnectedEdges.Remove(Edge);
+	if (FRailNodeData* NB = Nodes.Find(NodeB.Value)) NB->ConnectedEdges.Remove(Edge);
 
 	Edges.Remove(Edge.Value);
+	Graph.RemoveEdge(Edge.Value);
 
-	UpdateNodeType(Data->NodeA);
-	UpdateNodeType(Data->NodeB);
+	// UpdateNodeType handles auto-remove if EdgeCount hits 0
+	UpdateNodeType(NodeA);
+	UpdateNodeType(NodeB);
 	return true;
 }
 
@@ -1079,11 +1099,60 @@ void URailNetworkSubsystem::UpdateNodeType(FRailNodeID NodeID)
 
 	const int32 EdgeCount = Node->ConnectedEdges.Num();
 
-	if (EdgeCount <= 2)
-	
+	if (EdgeCount == 0)
+	{
+		Nodes.Remove(NodeID.Value);
+		Graph.RemoveNode(NodeID.Value);
+		return;
+	}
+
+	if (EdgeCount == 1)
+	{
 		Node->Type = ERailNodeType::Control;
-	else if (EdgeCount == 3)
-		Node->Type = ERailNodeType::Switch;
-	else
-		Node->Type = ERailNodeType::Crossover;
+		return;
+	}
+
+	// Read actual stored tangent from edge data, bypassing type-dependent GetTangentForEdgeAtNode
+	auto GetStoredTangent = [&](FRailEdgeID EdgeID) -> FVector
+		{
+			const FRailEdgeData* Edge = Edges.Find(EdgeID.Value);
+			if (!Edge) return FVector::ForwardVector;
+			return (Edge->NodeA.Value == NodeID.Value)
+				? Edge->TangentA.GetSafeNormal()
+				: Edge->TangentB.GetSafeNormal();
+		};
+
+	if (EdgeCount == 2)
+	{
+		FVector TanA = GetStoredTangent(Node->ConnectedEdges[0]);
+		FVector TanB = GetStoredTangent(Node->ConnectedEdges[1]);
+		if (FVector::DotProduct(TanA, TanB) < 0.f)
+			Node->Type = ERailNodeType::Control;
+		return;
+	}
+
+	// 3+ edges — determine type from angles
+	const FVector NodeForward = Graph.GetNodeData(Node->ID.Value)->Transform.GetUnitAxis(EAxis::X);
+
+	TArray<float> AnglesDeg;
+	for (FRailEdgeID EdgeID : Node->ConnectedEdges)
+	{
+		FVector Tangent = GetStoredTangent(EdgeID);
+		float Dot = FVector::DotProduct(Tangent, NodeForward);
+		AnglesDeg.Add(FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f))));
+	}
+
+	bool bAllSwitchAngle = true;
+	for (int32 i = 0; i < AnglesDeg.Num() && bAllSwitchAngle; i++)
+	{
+		for (int32 j = i + 1; j < AnglesDeg.Num() && bAllSwitchAngle; j++)
+		{
+			float Diff = FMath::Abs(AnglesDeg[i] - AnglesDeg[j]);
+			float DiffFlipped = FMath::Abs(AnglesDeg[i] - (180.f - AnglesDeg[j]));
+			if (Diff > 45.f && DiffFlipped > 45.f)
+				bAllSwitchAngle = false;
+		}
+	}
+
+	Node->Type = bAllSwitchAngle ? ERailNodeType::Switch : ERailNodeType::Crossover;
 }
