@@ -107,6 +107,24 @@ bool UBuildTrackTool::RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& Out
     return bFound;
 }
 
+bool UBuildTrackTool::RaycastToEdge(const FInputDeviceRay& Ray, FRailEdgeID& OutEdgeID) const
+{
+    URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
+    if (!RailNetwork) return false;
+
+    FRailLocation ClosestLoc;
+    float DistSq = TNumericLimits<float>::Max();
+
+    if (!RailNetwork->FindClosestRailLocation(CursorPos, ClosestLoc, DistSq))
+        return false;
+
+    const float SnapRadiusSq = FMath::Square(100.f);
+    if (DistSq > SnapRadiusSq) return false;
+
+    OutEdgeID = ClosestLoc.Edge;
+    return true;
+}
+
 FVector UBuildTrackTool::ComputeTangentFromRotation(const FVector& Normal) const
 {
     return FQuat(Normal, FMath::DegreesToRadians(TangentRotationDeg))
@@ -228,6 +246,16 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
     URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
     if (!RailNetwork) return;
 
+    // Handle removal if shift is held
+    bool bShiftHeld = FSlateApplication::Get().GetModifierKeys().IsShiftDown();
+    if (ToolState == EBuildTrackState::Hovering && bShiftHeld)
+    {
+        FRailEdgeID EdgeID;
+        RaycastToEdge(ClickPos, EdgeID);
+        RailNetwork->RequestRemoveEdge(EdgeID);
+        UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge removed successfully"));
+        return;
+    }
     if (ToolState == EBuildTrackState::Hovering)
     {
         PendingA.Position = CursorPos;

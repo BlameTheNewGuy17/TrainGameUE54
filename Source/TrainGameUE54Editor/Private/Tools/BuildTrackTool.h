@@ -92,7 +92,8 @@ protected:
 
     bool RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos, FVector& OutNormal) const;
     bool RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& OutNodeID) const;
-
+    bool RaycastToEdge(const FInputDeviceRay& Ray, FRailEdgeID& OutEdgeID) const;
+    
     // Returns the normalized tangent of Tool.TangentRotationDeg, rotated around an axis normal
     FVector ComputeTangentFromRotation(const FVector& Normal) const;
 
