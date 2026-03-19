@@ -47,7 +47,7 @@ public:
     UPROPERTY(EditAnywhere, Category = "Selected Node")
     FRotator Orientation = FRotator::ZeroRotator;
 
-    UPROPERTY(EditAnywhere, Category = "Selected Node")
+    UPROPERTY(VisibleAnywhere, Category = "Selected Node")
     ERailNodeType NodeType = ERailNodeType::Control;
 
     UPROPERTY(VisibleAnywhere, Category = "Selected Node")
@@ -80,6 +80,8 @@ protected:
     void DeselectNode();
     void UpdatePropertiesFromNode();
     bool RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos) const;
+    bool RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& OutNodeID) const;
+    void RebuildMirror();
 
     UPROPERTY()
     TObjectPtr<UModifyTrackToolProperties> Properties;
@@ -97,13 +99,7 @@ protected:
 
     bool bHasSelection = false;
     bool bHasHover = false;
+    bool bMoveValid = true;
 
-    static constexpr float SnapThreshold = 100.f;
-
-    // Visual draw
     TArray<FNodeRenderState> NodeMirror;
-
-    void RebuildMirror();
-    bool RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& OutNodeID) const;
-
 };

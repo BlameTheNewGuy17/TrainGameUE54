@@ -17,164 +17,146 @@ This subsystem does NOT replicate.
 In multiplayer, a replicated RailNetworkStateActor will forward commands here.
 */
 
+
+// -----------------------------------------------------------------------
+// FEdgePlacementRequest
+// Describes a desired edge placement. If ExistingNodeA/B are invalid,
+// the subsystem will create new nodes using TransformA/B.
+// -----------------------------------------------------------------------
+USTRUCT(BlueprintType)
+struct FEdgePlacementRequest
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadWrite) FRailNodeID ExistingNodeA;
+    UPROPERTY(BlueprintReadWrite) FRailNodeID ExistingNodeB;
+    UPROPERTY(BlueprintReadWrite) FTransform TransformA;
+    UPROPERTY(BlueprintReadWrite) FTransform TransformB;
+    UPROPERTY(BlueprintReadWrite) FVector TangentA = FVector::ForwardVector;
+    UPROPERTY(BlueprintReadWrite) FVector TangentB = FVector::ForwardVector;
+};
+
 UCLASS(BlueprintType)
 class TRAINGAMEUE54_API URailNetworkSubsystem : public UWorldSubsystem
 {
-	GENERATED_BODY()
-
+    GENERATED_BODY()
 
 public:
 
-	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
-	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+    virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+    virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
-	// ---------- DEBUG ----------
+    // ---------- TUNING ----------
 
-	UFUNCTION(BlueprintCallable) void ClearDebugDraw();
-	UFUNCTION(BlueprintCallable) void DebugDrawRailNetwork(float Duration = 0.f, float Thickness = 2.f) const;
-	void DrawWithPDI(FPrimitiveDrawInterface* PDI) const;
+    // Minimum curve radius in cm. 0 = no limit.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rail Network|Validation")
+    float MinCurveRadiusCm = 0.f;
 
+    // ---------- DEBUG ----------
 
-	// ---------- CORE GRAPH ----------
+    UFUNCTION(CallInEditor, Category = "Debug") void PrintNetworkData() const;
+    UFUNCTION(BlueprintCallable) void ClearDebugDraw();
+    UFUNCTION(BlueprintCallable) void DebugDrawRailNetwork(float Duration = 0.f, float Thickness = 2.f) const;
+    void DrawWithPDI(FPrimitiveDrawInterface* PDI) const;
 
-	UFUNCTION(BlueprintCallable) FRailNodeID CreateNode(const FTransform& WorldTransform, ERailNodeType Type);
-	UFUNCTION(BlueprintCallable) FRailNodeID CreateSwitchNode(const FTransform& WorldTransform, const FSwitchNodeData& Data);
-	UFUNCTION(BlueprintCallable) FRailNodeID CreateCrossoverNode(const FTransform& WorldTransform, const FCrossoverNodeData& Data);
-	FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector* TangentA = nullptr, const FVector* TangentB = nullptr);
+    // ---------- PLACEMENT API ----------
 
-	UFUNCTION(BlueprintCallable) 
-	void SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID);
-	
-	FTransform GetNodeTransform(FRailNodeID NodeID) const;
-	void SetNodeTransform(FRailNodeID NodeID, const FTransform& NewTransform);
-	void SetNodeType(FRailNodeID NodeID, ERailNodeType NewType);
+    UFUNCTION(BlueprintPure) bool CanPlaceEdge(const FEdgePlacementRequest& Request) const;
+    UFUNCTION(BlueprintCallable) bool RequestPlaceEdge(const FEdgePlacementRequest& Request);
 
-	// Returns true if a new edge with the given world-space tangent can be added to this node.
-    // Enforces Switch (max 6, max 3/side) and Crossover (max 8, max 4 angle families, max 2/family) rules.
-	bool CanAddEdgeToNode(FRailNodeID NodeID, const FVector& IncomingTangentWorld) const;
+    UFUNCTION(BlueprintPure) bool CanRemoveEdge(FRailEdgeID EdgeID) const;
+    UFUNCTION(BlueprintCallable) bool RequestRemoveEdge(FRailEdgeID EdgeID);
 
-	UFUNCTION(BlueprintCallable) bool RemoveEdge(FRailEdgeID Edge);
+    UFUNCTION(BlueprintPure) bool CanMoveNode(FRailNodeID NodeID, const FTransform& ProposedTransform) const;
+    UFUNCTION(BlueprintCallable) bool RequestMoveNode(FRailNodeID NodeID, const FTransform& NewTransform);
 
-	// Header
-	const TMap<int32, FRailNodeData>& GetNodes() const { return Nodes; }
-	UFUNCTION(BlueprintPure) bool GetNodeData(FRailNodeID Node, FRailNodeData& OutData) const;
-	UFUNCTION(BlueprintPure) bool GetSwitchData(FRailNodeID Node, FSwitchNodeData& OutData) const;
-	UFUNCTION(BlueprintPure) bool GetCrossoverData(FRailNodeID Node, FCrossoverNodeData& OutData) const;
+    // ---------- SWITCH CONTROL ----------
 
-	UFUNCTION(BlueprintPure) bool GetEdgeData(FRailEdgeID Edge, FRailEdgeData& OutData) const;
+    UFUNCTION(BlueprintCallable) void SetSwitchActiveEdge(FRailNodeID NodeID, FRailEdgeID EdgeID);
 
-	UFUNCTION(BlueprintPure) float GetEdgeLength(FRailEdgeID Edge) const;
-	UFUNCTION(BlueprintPure) TArray<FRailEdgeID> GetConnectedEdges(FRailNodeID Node) const;
+    // ---------- QUERIES ----------
 
-	void OnNodeTransformChanged(FRailNodeID NodeID);
+    const TMap<int32, FRailNodeData>& GetNodes() const { return RailNodes; }
 
-	// ---------- GEOMETRY (MOST IMPORTANT API) ----------
+    UFUNCTION(BlueprintPure) FVector GetSnappedTangentForNode(FRailNodeID NodeID, const FVector& IntentTangent) const;
+    UFUNCTION(BlueprintPure) bool GetNodeData(FRailNodeID Node, FRailNodeData& OutData) const;
+    UFUNCTION(BlueprintPure) bool GetSwitchData(FRailNodeID Node, FSwitchNodeData& OutData) const;
+    UFUNCTION(BlueprintPure) bool GetEdgeData(FRailEdgeID Edge, FRailEdgeData& OutData) const;
+    UFUNCTION(BlueprintPure) float GetEdgeLength(FRailEdgeID Edge) const;
+    UFUNCTION(BlueprintPure) TArray<FRailEdgeID> GetConnectedEdges(FRailNodeID Node) const;
+    UFUNCTION(BlueprintPure) FTransform GetNodeTransform(FRailNodeID NodeID) const;
+    UFUNCTION(BlueprintPure) FRailNodeID FindNearestNode(const FVector& WorldPos, float MaxDistanceCm) const;
 
-	/*
-	GetTransformAtDistance
-	The single authoritative geometry query for all trains.
-	Must match visual spline generation exactly.
-	*/
-	UFUNCTION(BlueprintPure)
-	FTransform GetTransformAtDistance(FRailEdgeID Edge, float S) const;
+    void OnNodeTransformChanged(FRailNodeID NodeID);
 
-	UFUNCTION(BlueprintPure)
-	FVector GetTangentForEdgeAtNode(FRailNodeID NodeID, FRailEdgeID EdgeID) const;
+    // ---------- GEOMETRY ----------
 
-	UFUNCTION(BlueprintPure)
-	FVector GetContinuationTangent(FRailNodeID NodeID, const FVector& HintDirection) const;
+    UFUNCTION(BlueprintPure) FTransform GetTransformAtDistance(FRailEdgeID Edge, float S) const;
+    UFUNCTION(BlueprintPure) FVector GetTangentForEdgeAtNode(FRailNodeID NodeID, FRailEdgeID EdgeID) const;
+    UFUNCTION(BlueprintPure) FVector GetContinuationTangent(FRailNodeID NodeID, const FVector& HintDirection) const;
+    UFUNCTION(BlueprintPure) bool FindClosestRailLocation(FVector WorldPos, FRailLocation& Out, float& OutDistSq) const;
 
-	UFUNCTION(BlueprintPure)
-	bool FindClosestRailLocation(FVector WorldPos, FRailLocation& Out, float& OutDistSq) const;
+    // ---------- CONSTRAINT SOLVER ----------
 
-	UFUNCTION(BlueprintPure)
-	FRailNodeID FindNearestNode(const FVector& WorldPos, float MaxDistanceCm) const;
+    UFUNCTION(BlueprintPure) bool GetPositionAndTangent(const FRailLocation& Loc, FVector& OutPos, FVector& OutTangent) const;
+    UFUNCTION(BlueprintCallable) bool SolveTrailingForLinearDistance(const FRailLocation& Anchor, const FVector& AnchorPos, float TargetDist, const FRailLocation& InitialGuess, const FRailMoveContext& Ctx, FRailLocation& OutSolved, int32 MaxNewtonIters = 12, float ToleranceCm = 0.5f);
 
-	// ---------- CONSTRAINT SOLVER ----------
+    // ---------- MOVEMENT ----------
 
-	UFUNCTION(BlueprintPure)
-	bool GetPositionAndTangent(
-		const FRailLocation& Loc,
-		FVector& OutPos,
-		FVector& OutTangent
-	) const;
+    UFUNCTION(BlueprintCallable) FRailTravelResult AdvanceAlongRails(FRailLocation Location, float DeltaS, const FRailMoveContext& Ctx) const;
+    UFUNCTION(BlueprintCallable) FRailEdgeID SelectNextEdge(FRailNodeID AtNode, FRailEdgeID IncomingEdge, ERailDirection IncomingDir, const FRailMoveContext& Ctx) const;
 
-	/*
-	Solve for a trailing rail location such that the WORLD distance
-	to AnchorPos is exactly TargetDist (meters).
-	
-	This is the "no accordion" constraint.
-	*/
-	UFUNCTION(BlueprintCallable)
-	bool SolveTrailingForLinearDistance(
-		const FRailLocation& Anchor,
-		const FVector& AnchorPos,
-		float TargetDist,
-		const FRailLocation& InitialGuess,
-		const FRailMoveContext& Ctx,
-		FRailLocation& OutSolved,
-		int32 MaxNewtonIters = 12,
-		float ToleranceCm = 0.5f
-	);
+    // ---------- BLOCKS ----------
 
-	// ---------- MOVEMENT ----------
+    UFUNCTION(BlueprintCallable) FRailBlockID CreateBlock(FName Label, ERailBlockType Type, const TArray<FRailEdgeID>& Edges);
+    UFUNCTION(BlueprintPure) FRailBlockID GetBlockForEdge(FRailEdgeID Edge) const;
+    UFUNCTION(BlueprintPure) bool IsBlockOccupied(FRailBlockID Block) const;
 
-	UFUNCTION(BlueprintCallable)
-	FRailTravelResult AdvanceAlongRails(
-		FRailLocation Location,
-		float DeltaS,
-		const FRailMoveContext& Ctx) const;
+    // ---------- SIGNALS ----------
 
-	UFUNCTION(BlueprintCallable)
-	FRailEdgeID SelectNextEdge(
-		FRailNodeID AtNode,
-		FRailEdgeID IncomingEdge,
-		ERailDirection IncomingDir,
-		const FRailMoveContext& Ctx) const;
-
-	// ---------- BLOCKS ----------
-
-	UFUNCTION(BlueprintCallable)
-	FRailBlockID CreateBlock(FName Label, ERailBlockType Type, const TArray<FRailEdgeID>& Edges);
-
-	UFUNCTION(BlueprintPure)
-	FRailBlockID GetBlockForEdge(FRailEdgeID Edge) const;
-
-	UFUNCTION(BlueprintPure)
-	bool IsBlockOccupied(FRailBlockID Block) const;
-
-	// ---------- SIGNALS ----------
-
-	UFUNCTION(BlueprintCallable)
-	FRailSignalID CreateSignal(FRailNodeID Node, FRailEdgeID Edge, FRailBlockID Block);
-
-	UFUNCTION(BlueprintPure)
-	bool CanEnterEdge(FRailNodeID AtNode, FRailEdgeID NextEdge, int32 TrainID) const;
+    UFUNCTION(BlueprintCallable) FRailSignalID CreateSignal(FRailNodeID Node, FRailEdgeID Edge, FRailBlockID Block);
+    UFUNCTION(BlueprintPure) bool CanEnterEdge(FRailNodeID AtNode, FRailEdgeID NextEdge, int32 TrainID) const;
 
 private:
 
-	// Authoritative storage
-	UPROPERTY(SaveGame) TMap<int32, FRailNodeData> Nodes;
-	UPROPERTY(SaveGame) TMap<int32, FSwitchNodeData> Switches;
-	UPROPERTY(SaveGame) TMap<int32, FCrossoverNodeData> Crossovers;
-	UPROPERTY(SaveGame) TMap<int32, FRailEdgeData> Edges;
-	UPROPERTY(SaveGame) TMap<int32, FRailBlockData> Blocks;
-	UPROPERTY(SaveGame) TMap<int32, FRailSignalData> Signals;
+    // ---------- STORAGE ----------
 
-	// Runtime caches
-	UPROPERTY(Transient) TMap<int32, int32> EdgeToBlock;
+    // Generic graph — owns transforms, connectivity, pathfinding
+    FNetworkGraph Graph;
 
-	// ID generators
-	// int32 NextNodeID = 1; -- Owned by graph now
-	// int32 NextEdgeID = 1; -- Owned by graph now
-	int32 NextBlockID = 1;
-	int32 NextSignalID = 1;
+    // Rail-specific data, keyed by graph node/edge ID
+    UPROPERTY(SaveGame) TMap<int32, FRailNodeData> RailNodes;
+    UPROPERTY(SaveGame) TMap<int32, FSwitchNodeData> Switches;
+    UPROPERTY(SaveGame) TMap<int32, FRailEdgeData> RailEdges;
+    UPROPERTY(SaveGame) TMap<int32, FRailBlockData> Blocks;
+    UPROPERTY(SaveGame) TMap<int32, FRailSignalData> Signals;
+    UPROPERTY(Transient) TMap<int32, int32> EdgeToBlock;
 
-	// Internal helpers
-	void RecomputeEdgeDerived(FRailEdgeData& EdgeData);
-	void RecomputeEdgeLength(FRailEdgeData& EdgeData);
-	void UpdateNodeType(FRailNodeID NodeID);
+    int32 NextBlockID = 1;
+    int32 NextSignalID = 1;
+    // Note: Coe ID Gen (NextNodeID and NextEdgeID) live inside FNetworkGraph
 
-	// THE Graph. Storage, IDs, etc.
-	FNetworkGraph Graph;
+    // ---------- INTERNAL GRAPH OPS ----------
+
+    FRailNodeID CreateNode(const FTransform& WorldTransform);
+    FRailEdgeID CreateEdge(FRailNodeID A, FRailNodeID B, const FVector& TangentA, const FVector& TangentB);
+    bool RemoveEdge(FRailEdgeID EdgeID);
+    bool RemoveNode(FRailNodeID NodeID);
+
+    // ---------- INTERNAL VALIDATION ----------
+
+
+    // Helper to get the snapped angle for storage
+    bool ValidateEdgeRequest(const FEdgePlacementRequest& Request) const;
+    void ResolveRequestTangents(const FEdgePlacementRequest& Request, FVector& OutTanA, FVector& OutTanB) const;
+    bool CanAddEdgeToNode(FRailNodeID NodeID, const FVector& IncomingTangent) const;
+    bool CheckCurveRadius(const FVector& PosA, const FVector& TanA, const FVector& PosB, const FVector& TanB) const;
+
+    // ---------- INTERNAL HELPERS ----------
+
+    float GetSnappedEdgeAngle(FRailNodeID NodeID, const FVector& EdgeTangent) const;
+    float ComputeEdgeAngleAtNode(FRailNodeID NodeID, const FVector& EdgeTangent) const;
+    void UpdateNodeType(FRailNodeID NodeID);
+    void RecomputeEdgeDerived(FRailEdgeData& EdgeData);
+    void RecomputeEdgeLength(FRailEdgeData& EdgeData);
 };

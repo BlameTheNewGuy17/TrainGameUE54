@@ -5,6 +5,7 @@
 #include "BaseBehaviors/SingleClickBehavior.h"
 #include "BaseBehaviors/MouseHoverBehavior.h"
 #include "RailNetworkTypes.h"
+#include "Subsystems/RailNetworkSubsystem.h"
 #include "BuildTrackTool.generated.h"
 
 UCLASS()
@@ -19,8 +20,8 @@ public:
 UENUM()
 enum class EBuildTrackState : uint8
 {
-    Hovering,   // No clicks yet, ghost node follows mouse
-    PlacingB,   // Click 1 done, previewing edge to cursor
+    Hovering,
+    PlacingB,
 };
 
 UCLASS(Transient)
@@ -33,6 +34,15 @@ public:
 
     UPROPERTY(VisibleAnywhere, Category = Status)
     float TangentRotationDeg = 0.f;
+
+};
+
+// Holds the pending first click data before it enters the graph
+struct FPendingPoint
+{
+    FVector Position = FVector::ZeroVector;
+    FVector Normal = FVector::UpVector;
+    FVector Tangent = FVector::ForwardVector;
 };
 
 UCLASS()
@@ -59,34 +69,33 @@ public:
     virtual void OnMouseWheelScrollUp(const FInputDeviceRay& CurrentPos) override;
     virtual void OnMouseWheelScrollDown(const FInputDeviceRay& CurrentPos) override;
 
-
-
 protected:
     UPROPERTY()
     TObjectPtr<UBuildTrackToolProperties> Properties;
 
     UWorld* TargetWorld = nullptr;
-
     EBuildTrackState ToolState = EBuildTrackState::Hovering;
 
-    // Point A (first click)
-    FVector PointA = FVector::ZeroVector;
-    FVector NormalA = FVector::ZeroVector;
-    FVector TangentA = FVector::ForwardVector;
-    FRailNodeID SnapNodeA; // valid if snapped to existing node
+    // Pending first click — not in the graph until edge is confirmed
+    FPendingPoint PendingA;
+    FRailNodeID SnapNodeA;
+    FRailNodeID SnapNodeB;
 
-    // Point B (second click)
-    FRailNodeID SnapNodeB; // valid if snapped to existing node
-
-    // Current cursor position (updated on hover)
+    // Cursor state
     FVector CursorPos = FVector::ZeroVector;
     FVector CursorNormal = FVector::UpVector;
+    FVector CursorTangent = FVector::RightVector;
     float TangentRotationDeg = 0.f;
-
+    float TangentRotationIncrement = 7.5f;
     bool bSnapping = false;
+    bool bPlacementValid = false;
 
     bool RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos, FVector& OutNormal) const;
     bool RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& OutNodeID) const;
+
+    // Returns the normalized tangent of Tool.TangentRotationDeg, rotated around an axis normal
     FVector ComputeTangentFromRotation(const FVector& Normal) const;
-    FTransform BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir);
+
+    FTransform BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir) const;
+    FEdgePlacementRequest BuildRequest(const FPendingPoint& A, FRailNodeID SnapA, const FVector& PosB, const FVector& NormalB, const FVector& TanB, FRailNodeID SnapB) const;
 };

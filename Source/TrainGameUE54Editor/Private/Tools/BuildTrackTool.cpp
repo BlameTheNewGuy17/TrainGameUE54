@@ -11,16 +11,12 @@
 
 #define LOCTEXT_NAMESPACE "UBuildTrackTool"
 
-// ---- Builder ----
-
 UInteractiveTool* UBuildTrackToolBuilder::BuildTool(const FToolBuilderState& SceneState) const
 {
     UBuildTrackTool* NewTool = NewObject<UBuildTrackTool>(SceneState.ToolManager);
     NewTool->SetWorld(SceneState.World);
     return NewTool;
 }
-
-// ---- Tool ----
 
 void UBuildTrackTool::SetWorld(UWorld* World)
 {
@@ -31,63 +27,53 @@ void UBuildTrackTool::Setup()
 {
     UInteractiveTool::Setup();
 
-    // Left Click behavior
     USingleClickInputBehavior* LeftClickBehavior = NewObject<USingleClickInputBehavior>();
     LeftClickBehavior->Initialize(this);
     AddInputBehavior(LeftClickBehavior);
 
-    // Right Click behavior
     ULocalSingleClickInputBehavior* RightClickBehavior = NewObject<ULocalSingleClickInputBehavior>();
     RightClickBehavior->Initialize();
     RightClickBehavior->SetUseRightMouseButton();
-    RightClickBehavior->IsHitByClickFunc = [](const FInputDeviceRay& ClickPos) {
-        return FInputRayHit(0.f);
-        };
-    RightClickBehavior->OnClickedFunc = [this](const FInputDeviceRay& ClickPos) {
-        if (ToolState == EBuildTrackState::PlacingB)
+    RightClickBehavior->IsHitByClickFunc = [](const FInputDeviceRay&) { return FInputRayHit(0.f); };
+    RightClickBehavior->OnClickedFunc = [this](const FInputDeviceRay&)
         {
-            SnapNodeA = FRailNodeID();
-            SnapNodeB = FRailNodeID();
-            ToolState = EBuildTrackState::Hovering;
-            UE_LOG(LogTemp, Warning, TEXT("BuildTool: Cancelled"));
-        }
-    };
+            if (ToolState == EBuildTrackState::PlacingB)
+            {
+                PendingA = FPendingPoint();
+                SnapNodeA = FRailNodeID();
+                SnapNodeB = FRailNodeID();
+                ToolState = EBuildTrackState::Hovering;
+                UE_LOG(LogTemp, Warning, TEXT("BuildTool: Cancelled"));
+            }
+        };
     AddInputBehavior(RightClickBehavior);
-    
-    // Hover behavior
+
     UMouseHoverBehavior* HoverBehavior = NewObject<UMouseHoverBehavior>();
     HoverBehavior->Initialize(this);
     AddInputBehavior(HoverBehavior);
 
-    // Mouse Wheel behavior
     UMouseWheelInputBehavior* ScrollBehavior = NewObject<UMouseWheelInputBehavior>();
     ScrollBehavior->Initialize(this);
     AddInputBehavior(ScrollBehavior);
 
     Properties = NewObject<UBuildTrackToolProperties>(this);
-
     AddToolPropertySource(Properties);
 }
+
+// ---- Raycast ----
 
 bool UBuildTrackTool::RaycastToWorld(const FInputDeviceRay& Ray, FVector& OutPos, FVector& OutNormal) const
 {
     FCollisionObjectQueryParams QueryParams(FCollisionObjectQueryParams::AllObjects);
     FHitResult HitResult;
-    bool bHit = TargetWorld->LineTraceSingleByObjectType(
-        HitResult,
-        Ray.WorldRay.Origin,
-        Ray.WorldRay.PointAt(999999),
-        QueryParams);
-
-    if (bHit)
+    if (TargetWorld->LineTraceSingleByObjectType(HitResult, Ray.WorldRay.Origin, Ray.WorldRay.PointAt(999999), QueryParams))
     {
         OutPos = HitResult.ImpactPoint;
         OutNormal = HitResult.ImpactNormal;
         return true;
     }
 
-    // Fall back to ground plane
-    FPlane GroundPlane(FVector(0, 0, 0), FVector(0, 0, 1));
+    FPlane GroundPlane(FVector::ZeroVector, FVector::UpVector);
     OutPos = FMath::RayPlaneIntersection(Ray.WorldRay.Origin, Ray.WorldRay.Direction, GroundPlane);
     OutNormal = FVector::UpVector;
     return false;
@@ -104,14 +90,12 @@ bool UBuildTrackTool::RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& Out
 
     for (const auto& Pair : RailNetwork->GetNodes())
     {
-        const FVector NodePos = RailNetwork->GetNodeTransform(FRailNodeID{ Pair.Key }).GetLocation();
+        const FVector NodePos = RailNetwork->GetNodeTransform(Pair.Value.ID).GetLocation();
         FVector ToNode = NodePos - Ray.WorldRay.Origin;
         float T = FVector::DotProduct(ToNode, Ray.WorldRay.Direction);
         if (T < 0.f) continue;
 
-        FVector Closest = Ray.WorldRay.Origin + Ray.WorldRay.Direction * T;
-        float DistSq = FVector::DistSquared(Closest, NodePos);
-
+        float DistSq = FVector::DistSquared(Ray.WorldRay.Origin + Ray.WorldRay.Direction * T, NodePos);
         if (DistSq < FMath::Square(SnapRadius) && DistSq < BestDistSq)
         {
             BestDistSq = DistSq;
@@ -125,10 +109,31 @@ bool UBuildTrackTool::RaycastToNode(const FInputDeviceRay& Ray, FRailNodeID& Out
 
 FVector UBuildTrackTool::ComputeTangentFromRotation(const FVector& Normal) const
 {
-    // Start with world forward, rotate around the surface normal by TangentRotationDeg
-    FVector Base = FVector::ForwardVector;
-    FQuat Rot = FQuat(Normal, FMath::DegreesToRadians(TangentRotationDeg));
-    return Rot.RotateVector(Base).GetSafeNormal();
+    return FQuat(Normal, FMath::DegreesToRadians(TangentRotationDeg))
+        .RotateVector(FVector::ForwardVector)
+        .GetSafeNormal();
+}
+
+FTransform UBuildTrackTool::BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir) const
+{
+    FVector Forward = TangentDir.GetSafeNormal();
+    FVector Right = FVector::CrossProduct(SurfaceNormal.GetSafeNormal(), Forward).GetSafeNormal();
+    FVector TrueUp = FVector::CrossProduct(Forward, Right).GetSafeNormal();
+    return FTransform(FRotationMatrix::MakeFromXZ(Forward, TrueUp).Rotator(), Position);
+}
+
+FEdgePlacementRequest UBuildTrackTool::BuildRequest(
+    const FPendingPoint& A, FRailNodeID SnapA,
+    const FVector& PosB, const FVector& NormalB, const FVector& TanB, FRailNodeID SnapB) const
+{
+    FEdgePlacementRequest Request;
+    Request.ExistingNodeA = SnapA;
+    Request.TransformA = BuildNodeTransform(A.Position, A.Normal, A.Tangent);
+    Request.TangentA = A.Tangent;
+    Request.ExistingNodeB = SnapB;
+    Request.TransformB = BuildNodeTransform(PosB, NormalB, TanB);
+    Request.TangentB = TanB;
+    return Request;
 }
 
 // ---- Hover ----
@@ -146,32 +151,41 @@ void UBuildTrackTool::OnBeginHover(const FInputDeviceRay& DevicePos)
 bool UBuildTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
 {
     RaycastToWorld(DevicePos, CursorPos, CursorNormal);
-
     URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
-    if (RailNetwork)
-    {
-        FRailNodeID NearestNode = FRailNodeID();
-        RaycastToNode(DevicePos, NearestNode);
-        if (NearestNode.IsValid())
-        {
-            FRailNodeData NodeData;
-            RailNetwork->GetNodeData(NearestNode, NodeData);
-            CursorPos = RailNetwork->GetNodeTransform(NodeData.ID).GetLocation();
-            bSnapping = true;
+    if (!RailNetwork) return true;
 
-            if (ToolState == EBuildTrackState::Hovering)
-                SnapNodeA = NearestNode;
-            else
-                SnapNodeB = NearestNode;
-        }
+    // Compute base cursor tangent from scroll wheel
+    CursorTangent = ComputeTangentFromRotation(CursorNormal);
+
+    FRailNodeID NearestNode;
+    if (RaycastToNode(DevicePos, NearestNode))
+    {
+        CursorPos = RailNetwork->GetNodeTransform(NearestNode).GetLocation();
+        bSnapping = true;
+
+        if (ToolState == EBuildTrackState::Hovering)
+            SnapNodeA = NearestNode;
         else
-        {
-            bSnapping = false;
-            if (ToolState == EBuildTrackState::Hovering)
-                SnapNodeA = FRailNodeID();
-            else
-                SnapNodeB = FRailNodeID();
-        }
+            SnapNodeB = NearestNode;
+
+        // Snap tangent to nearest family on the hovered node
+        FRailNodeID SnapNode = (ToolState == EBuildTrackState::Hovering) ? SnapNodeA : SnapNodeB;
+        if (SnapNode.IsValid())
+            CursorTangent = RailNetwork->GetSnappedTangentForNode(SnapNode, CursorTangent);
+    }
+    else
+    {
+        bSnapping = false;
+        if (ToolState == EBuildTrackState::Hovering)
+            SnapNodeA = FRailNodeID();
+        else
+            SnapNodeB = FRailNodeID();
+    }
+
+    if (ToolState == EBuildTrackState::PlacingB)
+    {
+        FEdgePlacementRequest PreviewRequest = BuildRequest(PendingA, SnapNodeA, CursorPos, CursorNormal, CursorTangent, SnapNodeB);
+        bPlacementValid = RailNetwork->CanPlaceEdge(PreviewRequest);
     }
 
     Properties->GhostPosition = CursorPos;
@@ -179,35 +193,28 @@ bool UBuildTrackTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
     return true;
 }
 
-void UBuildTrackTool::OnEndHover()
-{
-}
-
+void UBuildTrackTool::OnEndHover() {}
 
 // ---- Scroll ----
 
 FInputRayHit UBuildTrackTool::ShouldRespondToMouseWheel(const FInputDeviceRay& CurrentPos)
 {
-    
-    bool bAltHeld = FSlateApplication::Get().GetModifierKeys().IsAltDown();
-
-    return bAltHeld ? FInputRayHit(0.f) : FInputRayHit();
+    return FSlateApplication::Get().GetModifierKeys().IsAltDown() ? FInputRayHit(0.f) : FInputRayHit();
 }
 
 void UBuildTrackTool::OnMouseWheelScrollUp(const FInputDeviceRay& CurrentPos)
 {
-    TangentRotationDeg += 15.f;
+    TangentRotationDeg += TangentRotationIncrement;
     if (TangentRotationDeg >= 360.f) TangentRotationDeg -= 360.f;
     Properties->TangentRotationDeg = TangentRotationDeg;
 }
 
 void UBuildTrackTool::OnMouseWheelScrollDown(const FInputDeviceRay& CurrentPos)
 {
-    TangentRotationDeg -= 15.f;
+    TangentRotationDeg -= TangentRotationIncrement;
     if (TangentRotationDeg < 0.f) TangentRotationDeg += 360.f;
     Properties->TangentRotationDeg = TangentRotationDeg;
 }
-
 
 // ---- Click ----
 
@@ -219,98 +226,36 @@ FInputRayHit UBuildTrackTool::IsHitByClick(const FInputDeviceRay& ClickPos)
 void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
 {
     URailNetworkSubsystem* RailNetwork = TargetWorld->GetSubsystem<URailNetworkSubsystem>();
-    if (!RailNetwork)
-    {
-        ToolState = EBuildTrackState::Hovering;
-        return;
-    }
+    if (!RailNetwork) return;
+
     if (ToolState == EBuildTrackState::Hovering)
     {
-        PointA = CursorPos;
-        NormalA = CursorNormal;
-        if (bSnapping && SnapNodeA.IsValid())
-        {
-            TArray<FRailEdgeID> Existing = RailNetwork->GetConnectedEdges(SnapNodeA);
-            if (Existing.Num() == 1)
-                TangentA = -RailNetwork->GetTangentForEdgeAtNode(SnapNodeA, Existing[0]);
-            else
-                TangentA = ComputeTangentFromRotation(CursorNormal); // was GetContinuationTangent
-        }
-        else
-        {
-            TangentA = ComputeTangentFromRotation(CursorNormal);
-        }
+        PendingA.Position = CursorPos;
+        PendingA.Normal = CursorNormal;
+        PendingA.Tangent = CursorTangent;
         ToolState = EBuildTrackState::PlacingB;
+
         UE_LOG(LogTemp, Warning, TEXT("BuildTool: Point A set at %s, Tangent %s"),
-            *PointA.ToString(), *TangentA.ToString());
+            *PendingA.Position.ToString(), *PendingA.Tangent.ToString());
     }
     else if (ToolState == EBuildTrackState::PlacingB)
     {
-        FVector PointB = CursorPos;
-        FVector NormalB = CursorNormal;
-        FVector TangentB = FVector::ForwardVector;
-        if (bSnapping && SnapNodeB.IsValid())
+        FVector TangentB = CursorTangent;
+        FEdgePlacementRequest Request = BuildRequest(PendingA, SnapNodeA, CursorPos, CursorNormal, TangentB, SnapNodeB);
+
+        if (RailNetwork->RequestPlaceEdge(Request))
         {
-            TArray<FRailEdgeID> Existing = RailNetwork->GetConnectedEdges(SnapNodeB);
-            if (Existing.Num() == 1)
-                TangentB = -RailNetwork->GetTangentForEdgeAtNode(SnapNodeB, Existing[0]);
-            else
-                TangentB = ComputeTangentFromRotation(CursorNormal); // was GetContinuationTangent
+            UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge placed successfully"));
         }
         else
         {
-            TangentB = ComputeTangentFromRotation(CursorNormal);
-        }
-        FTransform TransformA = BuildNodeTransform(PointA, NormalA, TangentA);
-
-        // Before creating any nodes, validate topology
-        FVector TangentADir = TangentA.GetSafeNormal();
-        FVector TangentBDir = TangentB.GetSafeNormal();
-
-        if (SnapNodeA.IsValid() || SnapNodeB.IsValid())
-        {
-            // Only need to check existing nodes, new nodes always accept their first edge
-            if (SnapNodeA.IsValid() && !RailNetwork->CanAddEdgeToNode(SnapNodeA, TangentADir))
-            {
-                UE_LOG(LogTemp, Warning, TEXT("BuildTool: Node A rejected the edge"));
-                SnapNodeA = FRailNodeID();
-                SnapNodeB = FRailNodeID();
-                ToolState = EBuildTrackState::Hovering;
-                return;
-            }
-            if (SnapNodeB.IsValid() && !RailNetwork->CanAddEdgeToNode(SnapNodeB, TangentBDir))
-            {
-                UE_LOG(LogTemp, Warning, TEXT("BuildTool: Node B rejected the edge"));
-                SnapNodeA = FRailNodeID();
-                SnapNodeB = FRailNodeID();
-                ToolState = EBuildTrackState::Hovering;
-                return;
-            }
+            UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge placement rejected"));
         }
 
-        // Now safe to create nodes
-       
-
-        FRailNodeID NodeA = SnapNodeA.IsValid()
-            ? SnapNodeA
-            : RailNetwork->CreateNode(TransformA, ERailNodeType::Control);
-        FTransform TransformB = BuildNodeTransform(PointB, NormalB, TangentB);
-        FRailNodeID NodeB = SnapNodeB.IsValid()
-            ? SnapNodeB
-            : RailNetwork->CreateNode(TransformB, ERailNodeType::Control);
-        float Dist = FVector::Distance(PointA, PointB);
-        FVector ScaledTangentA = TangentA * Dist;
-        FVector ScaledTangentB = TangentB * Dist;
-        RailNetwork->CreateEdge(NodeA, NodeB, &ScaledTangentA, &ScaledTangentB);
-        FRailNodeData DataA, DataB;
-        RailNetwork->GetNodeData(NodeA, DataA);
-        RailNetwork->GetNodeData(NodeB, DataB);
-        UE_LOG(LogTemp, Warning, TEXT("NodeA pos: %s"), *RailNetwork->GetNodeTransform(DataA.ID).GetLocation().ToString());
-        UE_LOG(LogTemp, Warning, TEXT("NodeB pos: %s"), *RailNetwork->GetNodeTransform(DataB.ID).GetLocation().ToString());
-        UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge created from node %d to node %d"),
-            NodeA.Value, NodeB.Value);
+        PendingA = FPendingPoint();
         SnapNodeA = FRailNodeID();
         SnapNodeB = FRailNodeID();
+        bPlacementValid = false;
         ToolState = EBuildTrackState::Hovering;
     }
 }
@@ -324,55 +269,38 @@ void UBuildTrackTool::Render(IToolsContextRenderAPI* RenderAPI)
     FPrimitiveDrawInterface* PDI = RenderAPI->GetPrimitiveDrawInterface();
     if (!PDI) return;
 
-    // Draw ghost node at cursor
-    FLinearColor GhostColor = bSnapping ? FLinearColor::Green : FLinearColor::White;
+    FLinearColor GhostColor = bSnapping
+        ? FLinearColor::Green
+        : (bPlacementValid ? FLinearColor::Yellow : FLinearColor::Red);
+
+    if (ToolState != EBuildTrackState::PlacingB)
+        GhostColor = bSnapping ? FLinearColor::Green : FLinearColor::White;
+
     PDI->DrawPoint(CursorPos, GhostColor, 12.f, SDPG_Foreground);
 
-    // Draw tangent direction indicator
-    FVector Tangent = ComputeTangentFromRotation(CursorNormal);
-    PDI->DrawLine(CursorPos, CursorPos + Tangent * 200.f, FLinearColor::White, SDPG_Foreground, 2.f);
+    PDI->DrawLine(CursorPos, CursorPos + CursorTangent * 200.f, FLinearColor::White, SDPG_Foreground, 2.f);
 
-    // If in PlacingB state, draw preview curve from A to cursor
     if (ToolState == EBuildTrackState::PlacingB)
     {
-        // Draw point A
-        PDI->DrawPoint(PointA, FLinearColor::Green, 12.f, SDPG_Foreground);
+        PDI->DrawPoint(PendingA.Position, FLinearColor::Green, 12.f, SDPG_Foreground);
 
-        // Draw preview curve
-        float Dist = FVector::Distance(PointA, CursorPos);
-        FVector TangentB = ComputeTangentFromRotation(CursorNormal);
+        float Dist = FVector::Distance(PendingA.Position, CursorPos);
+        FLinearColor CurveColor = bPlacementValid ? FLinearColor::Yellow : FLinearColor::Red;
 
-        FVector Prev = PointA;
+        FVector Prev = PendingA.Position;
         for (int32 i = 1; i <= 32; ++i)
         {
             const float T = (float)i / 32.f;
-            const float TT = T * T;
-            const float TTT = TT * T;
-
-            const float H00 = 2 * TTT - 3 * TT + 1;
-            const float H10 = TTT - 2 * TT + T;
-            const float H01 = -2 * TTT + 3 * TT;
-            const float H11 = TTT - TT;
-
-            FVector Curr = H00 * PointA + H10 * (TangentA * Dist) + H01 * CursorPos + H11 * (TangentB * Dist);
-            PDI->DrawLine(Prev, Curr, FLinearColor::Yellow, SDPG_Foreground, 2.f);
+            const float TT = T * T, TTT = TT * T;
+            FVector Curr =
+                (2 * TTT - 3 * TT + 1) * PendingA.Position +
+                (TTT - 2 * TT + T) * (PendingA.Tangent * Dist) +
+                (-2 * TTT + 3 * TT) * CursorPos +
+                (TTT - TT) * (CursorTangent * Dist);
+            PDI->DrawLine(Prev, Curr, CurveColor, SDPG_Foreground, 2.f);
             Prev = Curr;
         }
     }
 }
-
-// ---- MathHelper ----
-
-FTransform UBuildTrackTool::BuildNodeTransform(const FVector& Position, const FVector& SurfaceNormal, const FVector& TangentDir)
-{
-    FVector Forward = TangentDir.GetSafeNormal();
-    FVector Up = SurfaceNormal.GetSafeNormal();
-    // Orthonormalize
-    FVector Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
-    FVector TrueUp = FVector::CrossProduct(Forward, Right).GetSafeNormal();
-    FMatrix RotMat = FRotationMatrix::MakeFromXZ(Forward, TrueUp);
-    return FTransform(RotMat.Rotator(), Position);
-}
-
 
 #undef LOCTEXT_NAMESPACE
