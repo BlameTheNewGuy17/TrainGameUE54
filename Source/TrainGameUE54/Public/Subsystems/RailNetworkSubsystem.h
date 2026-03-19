@@ -134,7 +134,7 @@ private:
 
     int32 NextBlockID = 1;
     int32 NextSignalID = 1;
-    // Note: Coe ID Gen (NextNodeID and NextEdgeID) live inside FNetworkGraph
+    // Note: Core ID Gen (NextNodeID and NextEdgeID) live inside FNetworkGraph
 
     // ---------- INTERNAL GRAPH OPS ----------
 

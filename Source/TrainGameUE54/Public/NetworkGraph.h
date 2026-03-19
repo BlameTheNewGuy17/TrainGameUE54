@@ -18,11 +18,13 @@ class FNetworkGraph
 {
 public:
 	int32 AddNode(const FTransform& Transform);
+    int32 AddNodeWithID(int32 ID, const FTransform& Transform);
     const FNodeData* GetNodeData(int32 NodeID) const;
     void SetNodeTransform(int32 NodeID, const FTransform& NewTransform);
     bool RemoveNode(const int32 NodeID);
 
     int32 AddEdge(int32 A, int32 B);
+    int32 AddEdgeWithID(int32 ID, int32 A, int32 B);
     const FEdgeData* GetEdgeData(const int32 EdgeID) const;
     bool RemoveEdge(const int32 EdgeID);
 

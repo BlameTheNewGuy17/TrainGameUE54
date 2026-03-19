@@ -10,6 +10,15 @@ int32 FNetworkGraph::AddNode(const FTransform& Transform)
     return NewID;
 }
 
+int32 FNetworkGraph::AddNodeWithID(int32 ID, const FTransform& Transform)
+{
+    FNodeData Data;
+    Data.Transform = Transform;
+    Nodes.Add(ID, Data);
+    NextNodeID = FMath::Max(NextNodeID, ID + 1);
+    return ID;
+}
+
 const FNodeData* FNetworkGraph::GetNodeData(int32 NodeID) const
 {
     return Nodes.Find(NodeID);
@@ -53,6 +62,21 @@ int32 FNetworkGraph::AddEdge(int32 A, int32 B)
     Nodes[B].ConnectedEdges.Add(NewID);
 
     return NewID;
+}
+
+int32 FNetworkGraph::AddEdgeWithID(int32 ID, int32 A, int32 B)
+{
+    FEdgeData Data;
+    Data.NodeA = A;
+    Data.NodeB = B;
+    Edges.Add(ID, Data);
+
+    // Restore connectivity
+    if (FNodeData* NA = Nodes.Find(A)) NA->ConnectedEdges.Add(ID);
+    if (FNodeData* NB = Nodes.Find(B)) NB->ConnectedEdges.Add(ID);
+
+    NextEdgeID = FMath::Max(NextEdgeID, ID + 1);
+    return ID;
 }
 
 const FEdgeData* FNetworkGraph::GetEdgeData(const int32 EdgeID) const
