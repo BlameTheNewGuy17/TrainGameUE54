@@ -50,7 +50,7 @@ public:
 
     // Minimum curve radius in cm. 0 = no limit.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rail Network|Validation")
-    float MinCurveRadiusCm = 0.f;
+    float MinCurveRadiusCm = 200.f;
 
     // ---------- DEBUG ----------
 

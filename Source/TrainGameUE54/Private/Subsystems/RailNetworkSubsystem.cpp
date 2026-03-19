@@ -298,9 +298,17 @@ bool URailNetworkSubsystem::CanAddEdgeToNode(FRailNodeID NodeID, const FVector& 
         // Adding to existing family
         // Max 3 edges per family for Switch (trunk + 2 branches)
         // Max 2 edges per family for Crossover
+        
+        // A Control node with 2 edges can accept a 3rd if it would form a valid switch
+        // (incoming angle matches an existing family — promotion to Switch happens in UpdateNodeType)
+        if (Node->Type == ERailNodeType::Control && EdgeCount == 2)
+            return true;
+
         int32 MaxPerFamily = (Node->Type == ERailNodeType::Switch) ? 3 : 2;
-        if (MatchingFamily->Count >= MaxPerFamily) return false;
+        if (MatchingFamily->Count >= MaxPerFamily) 
+            return false;
         return true;
+        
     }
     else
     {
@@ -315,26 +323,48 @@ bool URailNetworkSubsystem::CanAddEdgeToNode(FRailNodeID NodeID, const FVector& 
 
 bool URailNetworkSubsystem::CheckCurveRadius(const FVector& PosA, const FVector& TanA, const FVector& PosB, const FVector& TanB) const
 {
+    UE_LOG(LogTemp, Warning, TEXT("CheckCurveRadius: A | %s | %s | B | %s | %s"), *PosA.ToString(), *TanA.ToString(), *PosB.ToString(), *TanB.ToString());
     if (MinCurveRadiusCm <= 0.f) return true;
 
+    const float ChordLen = FVector::Distance(PosA, PosB);
+    if (ChordLen < KINDA_SMALL_NUMBER) return true;
+
+    const FVector NormTanA = TanA.GetSafeNormal() * ChordLen;
+    const FVector NormTanB = TanB.GetSafeNormal() * ChordLen;
+
+    // Sample the curve
     const int32 NumSamples = 16;
-    for (int32 i = 1; i < NumSamples; ++i)
+    TArray<FVector> Points;
+    Points.Reserve(NumSamples + 1);
+    for (int32 i = 0; i <= NumSamples; ++i)
     {
         const float T = (float)i / (float)NumSamples;
+        Points.Add(RailMath::EvalHermitePos(PosA, NormTanA, PosB, NormTanB, T));
+    }
 
-        FVector Tangent = RailMath::EvalHermiteTangent(PosA, TanA, PosB, TanB, T).GetSafeNormal();
-        FVector TangentDeriv = RailMath::EvalHermiteSecondDerivative(PosA, TanA, PosB, TanB, T);
+    // Check circumradius of every consecutive triplet
+    for (int32 i = 0; i < Points.Num() - 2; ++i)
+    {
+        const FVector& A = Points[i];
+        const FVector& B = Points[i + 1];
+        const FVector& C = Points[i + 2];
 
-        float CrossMag = FVector::CrossProduct(Tangent, TangentDeriv).Size();
-        if (CrossMag < KINDA_SMALL_NUMBER) continue; // Straight segment, no curvature
+        const float AB = FVector::Distance(A, B);
+        const float BC = FVector::Distance(B, C);
+        const float CA = FVector::Distance(C, A);
 
-        float Radius = 1.f / CrossMag;
+        const float CrossMag = FVector::CrossProduct(B - A, C - A).Size();
+        if (CrossMag < KINDA_SMALL_NUMBER) continue; // Straight, no curvature
+
+        const float Radius = (AB * BC * CA) / (2.f * CrossMag);
+
         if (Radius < MinCurveRadiusCm)
         {
             UE_LOG(LogTemp, Warning, TEXT("CheckCurveRadius: Radius %.1f below minimum %.1f"), Radius, MinCurveRadiusCm);
             return false;
         }
     }
+
     return true;
 }
 
