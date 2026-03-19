@@ -10,6 +10,8 @@ public:
 
     TSharedPtr<FUICommandInfo> BuildTrackTool;
     TSharedPtr<FUICommandInfo> ModifyTrackTool;
+    TSharedPtr<FUICommandInfo> SaveNetwork;
+    TSharedPtr<FUICommandInfo> LoadNetwork;
 
     static TMap<FName, TArray<TSharedPtr<FUICommandInfo>>> GetCommands()
     {

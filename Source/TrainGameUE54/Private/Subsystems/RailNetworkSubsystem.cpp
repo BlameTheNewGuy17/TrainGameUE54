@@ -2,6 +2,8 @@
 
 #include "Subsystems/RailNetworkSubsystem.h"
 #include "RailMath.h"
+#include "RailNetworkSaveGame.h"
+#include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
 
 // ---------- INIT ----------
@@ -27,6 +29,7 @@ FRailNodeID URailNetworkSubsystem::CreateNode(const FTransform& WorldTransform)
     FRailNodeData Node;
     Node.ID = NewID;
     Node.Type = ERailNodeType::Control;
+    Node.WorldTransform = WorldTransform;
 
     RailNodes.Add(NewID.Value, Node);
     return NewID;
@@ -1078,6 +1081,70 @@ bool URailNetworkSubsystem::CanEnterEdge(FRailNodeID AtNode, FRailEdgeID NextEdg
 {
     // MVP: always allow
     return true;
+}
+
+void URailNetworkSubsystem::SaveNetwork(const FString& SlotName)
+{
+    UE_LOG(LogTemp, Warning, TEXT("SaveNetwork called"));
+    URailNetworkSaveGame* SaveObject = Cast<URailNetworkSaveGame>(
+        UGameplayStatics::CreateSaveGameObject(URailNetworkSaveGame::StaticClass()));
+    if (!SaveObject) return;
+
+    SaveObject->RailNodes = RailNodes;
+    SaveObject->RailEdges = RailEdges;
+    SaveObject->Switches = Switches;
+    SaveObject->Blocks = Blocks;
+    SaveObject->Signals = Signals;
+    SaveObject->NextBlockID = NextBlockID;
+    SaveObject->NextSignalID = NextSignalID;
+
+    UGameplayStatics::SaveGameToSlot(SaveObject, SlotName, 0);
+    UE_LOG(LogTemp, Warning, TEXT("RailNetwork: Saved to slot '%s'"), *SlotName);
+}
+
+void URailNetworkSubsystem::LoadNetwork(const FString& SlotName)
+{
+    UE_LOG(LogTemp, Warning, TEXT("LoadNetwork called"));
+    URailNetworkSaveGame* SaveObject = Cast<URailNetworkSaveGame>(
+        UGameplayStatics::LoadGameFromSlot(SlotName, 0));
+    if (!SaveObject)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("RailNetwork: No save found in slot '%s'"), *SlotName);
+        return;
+    }
+
+    // Restore subsystem maps
+    RailNodes = SaveObject->RailNodes;
+    RailEdges = SaveObject->RailEdges;
+    Switches = SaveObject->Switches;
+    Blocks = SaveObject->Blocks;
+    Signals = SaveObject->Signals;
+    NextBlockID = SaveObject->NextBlockID;
+    NextSignalID = SaveObject->NextSignalID;
+
+    // Reconstruct FNetworkGraph from restored data
+    Graph = FNetworkGraph();
+    for (const auto& Pair : RailNodes)
+    {
+        Graph.AddNodeWithID(Pair.Key, Pair.Value.WorldTransform);
+    }
+    for (const auto& Pair : RailEdges)
+    {
+        Graph.AddEdgeWithID(Pair.Key, Pair.Value.NodeA.Value, Pair.Value.NodeB.Value);
+    }
+
+    // Rebuild EdgeToBlock lookup
+    EdgeToBlock.Empty();
+    for (const auto& Pair : Blocks)
+    {
+        for (const FRailEdgeID& EdgeID : Pair.Value.MemberEdges)
+        {
+            EdgeToBlock.Add(EdgeID.Value, Pair.Key);
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("RailNetwork: Loaded from slot '%s' — %d nodes, %d edges"),
+        *SlotName, RailNodes.Num(), RailEdges.Num());
 }
 
 // ---------- DEBUG ----------

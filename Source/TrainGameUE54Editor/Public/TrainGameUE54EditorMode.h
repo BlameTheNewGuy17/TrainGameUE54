@@ -19,4 +19,5 @@ public:
     virtual TMap<FName, TArray<TSharedPtr<FUICommandInfo>>> GetModeCommands() const override;
     virtual void ActorSelectionChangeNotify() override;
     virtual void ModeTick(float DeltaTime) override;
+
 };

@@ -117,6 +117,11 @@ public:
     UFUNCTION(BlueprintCallable) FRailSignalID CreateSignal(FRailNodeID Node, FRailEdgeID Edge, FRailBlockID Block);
     UFUNCTION(BlueprintPure) bool CanEnterEdge(FRailNodeID AtNode, FRailEdgeID NextEdge, int32 TrainID) const;
 
+    // ---------- SAVEGAME ----------
+
+    UFUNCTION(CallInEditor) void SaveNetwork(const FString& SlotName = "Test");
+    UFUNCTION(CallInEditor) void LoadNetwork(const FString& SlotName = "Test");
+
 private:
 
     // ---------- STORAGE ----------
