@@ -375,7 +375,7 @@ bool URailNetworkSubsystem::CanPlaceEdge(const FEdgePlacementRequest& Request) c
     return ValidateEdgeRequest(Request);
 }
 
-bool URailNetworkSubsystem::RequestPlaceEdge(const FEdgePlacementRequest& Request)
+bool URailNetworkSubsystem::RequestPlaceEdge(const FEdgePlacementRequest& Request, FRailEdgeData& OutEdge, FRailNodeData& OutNodeA, FRailNodeData& OutNodeB)
 {
     if (!CanPlaceEdge(Request)) return false;
 
@@ -400,7 +400,10 @@ bool URailNetworkSubsystem::RequestPlaceEdge(const FEdgePlacementRequest& Reques
     UE_LOG(LogTemp, Warning, TEXT("TanA: %s | TanB: %s"),
         *TanA.ToString(),
         *TanB.ToString())
-    CreateEdge(NodeA, NodeB, TanA * Dist, TanB * Dist);
+    FRailEdgeID ID = CreateEdge(NodeA, NodeB, TanA * Dist, TanB * Dist);
+    GetEdgeData(ID, OutEdge);
+    GetNodeData(NodeA, OutNodeA);
+    GetNodeData(NodeB, OutNodeB);
     return true;
 }
 
@@ -1113,6 +1116,8 @@ bool URailNetworkSubsystem::CanEnterEdge(FRailNodeID AtNode, FRailEdgeID NextEdg
     return true;
 }
 
+// ---------- SAVEGAME ----------
+
 void URailNetworkSubsystem::SaveNetwork(const FString& SlotName)
 {
     UE_LOG(LogTemp, Warning, TEXT("SaveNetwork called"));
@@ -1175,6 +1180,67 @@ void URailNetworkSubsystem::LoadNetwork(const FString& SlotName)
 
     UE_LOG(LogTemp, Warning, TEXT("RailNetwork: Loaded from slot '%s' — %d nodes, %d edges"),
         *SlotName, RailNodes.Num(), RailEdges.Num());
+}
+
+// ---------- REPLICATION HELPERS ----------
+
+void URailNetworkSubsystem::LoadSnapshot(const TArray<FRailNodeSnapshot>& Nodes, const TArray<FRailEdgeData>& Edges)
+{
+    // Clear existing state
+    Graph = FNetworkGraph();
+    RailNodes.Empty();
+    RailEdges.Empty();
+    Switches.Empty();
+
+    // Restore nodes
+    for (const FRailNodeSnapshot& Snap : Nodes)
+    {
+        FRailNodeData NodeData;
+        NodeData.ID = Snap.ID;
+        NodeData.Type = Snap.Type;
+        NodeData.WorldTransform = Snap.WorldTransform;
+        NodeData.ConnectedEdges = Snap.ConnectedEdges;
+        RailNodes.Add(Snap.ID.Value, NodeData);
+        Graph.AddNodeWithID(Snap.ID.Value, Snap.WorldTransform);
+    }
+
+    // Restore edges
+    for (const FRailEdgeData& Edge : Edges)
+    {
+        RailEdges.Add(Edge.ID.Value, Edge);
+        Graph.AddEdgeWithID(Edge.ID.Value, Edge.NodeA.Value, Edge.NodeB.Value);
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("RailNetwork: Snapshot loaded — %d nodes, %d edges"), RailNodes.Num(), RailEdges.Num());
+}
+
+void URailNetworkSubsystem::ApplyRemoteEdgePlacement(const FRailEdgeData& Edge, const FRailNodeSnapshot& NodeA, const FRailNodeSnapshot& NodeB)
+{
+    // Add or update nodes
+    auto ApplyNode = [&](const FRailNodeSnapshot& Snap)
+        {
+            FRailNodeData& NodeData = RailNodes.FindOrAdd(Snap.ID.Value);
+            NodeData.ID = Snap.ID;
+            NodeData.Type = Snap.Type;
+            NodeData.WorldTransform = Snap.WorldTransform;
+            NodeData.ConnectedEdges = Snap.ConnectedEdges;
+            Graph.AddNodeWithID(Snap.ID.Value, Snap.WorldTransform);
+        };
+
+    ApplyNode(NodeA);
+    ApplyNode(NodeB);
+
+    // Add edge
+    RailEdges.Add(Edge.ID.Value, Edge);
+    Graph.AddEdgeWithID(Edge.ID.Value, Edge.NodeA.Value, Edge.NodeB.Value);
+
+    UE_LOG(LogTemp, Warning, TEXT("RailNetwork: Remote edge %d applied"), Edge.ID.Value);
+}
+
+void URailNetworkSubsystem::ApplyRemoteEdgeRemoval(FRailEdgeID EdgeID)
+{
+    RemoveEdge(EdgeID);
+    UE_LOG(LogTemp, Warning, TEXT("RailNetwork: Remote edge %d removed"), EdgeID.Value);
 }
 
 // ---------- DEBUG ----------

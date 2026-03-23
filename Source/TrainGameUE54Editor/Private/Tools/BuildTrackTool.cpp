@@ -271,7 +271,10 @@ void UBuildTrackTool::OnClicked(const FInputDeviceRay& ClickPos)
         FVector TangentB = CursorTangent;
         FEdgePlacementRequest Request = BuildRequest(PendingA, SnapNodeA, CursorPos, CursorNormal, TangentB, SnapNodeB);
 
-        if (RailNetwork->RequestPlaceEdge(Request))
+        // We need dummy pointers for the full signature
+        FRailEdgeData Edge;
+        FRailNodeData NodeA, NodeB;
+        if (RailNetwork->RequestPlaceEdge(Request, Edge, NodeA, NodeB))
         {
             UE_LOG(LogTemp, Warning, TEXT("BuildTool: Edge placed successfully"));
         }

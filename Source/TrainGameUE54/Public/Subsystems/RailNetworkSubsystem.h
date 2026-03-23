@@ -62,8 +62,7 @@ public:
     // ---------- PLACEMENT API ----------
 
     UFUNCTION(BlueprintPure) bool CanPlaceEdge(const FEdgePlacementRequest& Request) const;
-    UFUNCTION(BlueprintCallable) bool RequestPlaceEdge(const FEdgePlacementRequest& Request);
-
+    UFUNCTION(BlueprintCallable) bool RequestPlaceEdge(const FEdgePlacementRequest& Request, FRailEdgeData& OutEdge, FRailNodeData& OutNodeA, FRailNodeData& OutNodeB);
     UFUNCTION(BlueprintPure) bool CanRemoveEdge(FRailEdgeID EdgeID) const;
     UFUNCTION(BlueprintCallable) bool RequestRemoveEdge(FRailEdgeID EdgeID);
 
@@ -86,6 +85,8 @@ public:
     UFUNCTION(BlueprintPure) TArray<FRailEdgeID> GetConnectedEdges(FRailNodeID Node) const;
     UFUNCTION(BlueprintPure) FTransform GetNodeTransform(FRailNodeID NodeID) const;
     UFUNCTION(BlueprintPure) FRailNodeID FindNearestNode(const FVector& WorldPos, float MaxDistanceCm) const;
+    const TMap<int32, FRailEdgeData>& GetEdges() const { return RailEdges; }
+
 
     void OnNodeTransformChanged(FRailNodeID NodeID);
 
@@ -121,6 +122,11 @@ public:
 
     UFUNCTION(CallInEditor) void SaveNetwork(const FString& SlotName = "Test");
     UFUNCTION(CallInEditor) void LoadNetwork(const FString& SlotName = "Test");
+
+    // ---------- REPLICATION HELPERS ----------
+    UFUNCTION(BlueprintCallable) void LoadSnapshot(const TArray<FRailNodeSnapshot>& Nodes, const TArray<FRailEdgeData>& Edges);
+    UFUNCTION(BlueprintCallable) void ApplyRemoteEdgePlacement(const FRailEdgeData& Edge, const FRailNodeSnapshot& NodeA, const FRailNodeSnapshot& NodeB);
+    UFUNCTION(BlueprintCallable) void ApplyRemoteEdgeRemoval(FRailEdgeID EdgeID);
 
 private:
 
