@@ -42,10 +42,18 @@ public:
 	UFUNCTION(BlueprintCallable)
 	bool RemoveRollingStock(FRollingStockID ID);
 
-	void AdvanceRollingStock(FRollingStockID ID, float DeltaTime);
+	UFUNCTION(BlueprintCallable)
+	void CoupleCars(FRollingStockID CarA, FRollingStockID CarB, FTrainID& TrainOut);
+
+	UFUNCTION(BlueprintCallable)
+	void UncoupleCars(FRollingStockID CarA, FRollingStockID CarB, FTrainID& TrainAOut, FTrainID& TrainBOut);
+
+	void AdvanceTrain(FTrainData Train, float DeltaTime);
+	void AdvanceRollingStock(FRollingStockID ID, float DeltaTime, FRailLocation& SolvedRailLocOut);
 
 private:
 	TMap<FRollingStockID, FRollingStockState> RollingStockStates;
+	TMap<FTrainID, FTrainData> Trains;
 
 	// ID generators
 	int32 NextRollingStockID = 1;
@@ -64,5 +72,10 @@ private:
 	TMap<FRollingStockID, FTrackedRailBody> CachedTrackedBodies;
 
 	TMap<FRollingStockID, FTrackedRailBody> RailBodyRegistry;
+
+	bool bLogDebug = false; // Debug stuff like draw, positions, etc.
+	bool bLogSetup = false; // Init, BeginPlay, etc.
+	bool bLogModification = true; // Data storage modification like de/registration
+	bool bLogMovement = true; // Tick, Advance Rolling Stock
 
 };

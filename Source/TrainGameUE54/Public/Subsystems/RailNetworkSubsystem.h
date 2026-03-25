@@ -54,7 +54,7 @@ public:
 
     // ---------- DEBUG ----------
 
-    UFUNCTION(CallInEditor, Category = "Debug") void PrintNetworkData() const;
+    UFUNCTION(BlueprintCallable) void PrintNetworkData() const;
     UFUNCTION(BlueprintCallable) void ClearDebugDraw();
     UFUNCTION(BlueprintCallable) void DebugDrawRailNetwork(float Duration = 0.f, float Thickness = 2.f) const;
     void DrawWithPDI(FPrimitiveDrawInterface* PDI) const;
@@ -85,7 +85,7 @@ public:
     UFUNCTION(BlueprintPure) TArray<FRailEdgeID> GetConnectedEdges(FRailNodeID Node) const;
     UFUNCTION(BlueprintPure) FTransform GetNodeTransform(FRailNodeID NodeID) const;
     UFUNCTION(BlueprintPure) FRailNodeID FindNearestNode(const FVector& WorldPos, float MaxDistanceCm) const;
-    const TMap<int32, FRailEdgeData>& GetEdges() const { return RailEdges; }
+    UFUNCTION(BlueprintPure) const TMap<int32, FRailEdgeData>& GetEdges() const { return RailEdges; }
 
 
     void OnNodeTransformChanged(FRailNodeID NodeID);
@@ -120,8 +120,8 @@ public:
 
     // ---------- SAVEGAME ----------
 
-    UFUNCTION(CallInEditor) void SaveNetwork(const FString& SlotName = "Test");
-    UFUNCTION(CallInEditor) void LoadNetwork(const FString& SlotName = "Test");
+    UFUNCTION(CallInEditor, BlueprintCallable) void SaveNetwork(const FString& SlotName = "Test");
+    UFUNCTION(CallInEditor, BlueprintCallable) void LoadNetwork(const FString& SlotName = "Test");
 
     // ---------- REPLICATION HELPERS ----------
     UFUNCTION(BlueprintCallable) void LoadSnapshot(const TArray<FRailNodeSnapshot>& Nodes, const TArray<FRailEdgeData>& Edges);
